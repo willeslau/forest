@@ -4,6 +4,7 @@
 mod adt;
 mod builtin;
 mod policy;
+mod state_migration;
 
 pub use self::adt::*;
 pub use self::builtin::*;
