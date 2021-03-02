@@ -14,7 +14,7 @@ use vm::ActorState;
 /// State tree implementation using hamt. This structure is not threadsafe and should only be used
 /// in sync contexts.
 pub struct StateTree<'db, S> {
-    hamt: Map<'db, S, ActorState>,
+    pub hamt: Map<'db, S, ActorState>,
 
     version: StateTreeVersion,
     info: Option<Cid>,

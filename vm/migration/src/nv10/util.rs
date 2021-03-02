@@ -29,7 +29,6 @@ where
             .ok_or_else(|| "Failed to set Hamt node in v3".to_owned())?;
         Ok(())
     })?;
-
     Ok(out_root_node.flush()?)
 }
 
