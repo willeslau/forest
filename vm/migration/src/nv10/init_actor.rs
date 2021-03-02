@@ -4,11 +4,11 @@ use cid::{Cid, Code::Blake2b256};
 use fil_types::HAMT_BIT_WIDTH;
 use ipld_blockstore::BlockStore;
 
-use crate::state_migration::{ActorMigrationInput, ActorMigrationOutput, Migrator};
+use crate::{ActorMigrationInput, ActorMigrationOutput, Migrator};
 
 use super::util::migrate_hamt_raw;
-use actorv2::init::State as StateV2;
-use actorv3::{init::State as StateV3, INIT_ACTOR_CODE_ID};
+use actor::actorv2::init::State as StateV2;
+use actor::actorv3::{init::State as StateV3, INIT_ACTOR_CODE_ID};
 pub struct InitMigrator {}
 
 impl Migrator for InitMigrator {

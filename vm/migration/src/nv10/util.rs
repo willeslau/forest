@@ -1,7 +1,7 @@
-use actorv2::ipld_amt::Amt as AmtV2;
-use actorv2::ipld_hamt::Hamt as HamtV2;
-use actorv3::ipld_amt::Amt as AmtV3;
-use actorv3::ipld_hamt::Hamt as HamtV3;
+use actor::actorv2::ipld_amt::Amt as AmtV2;
+use actor::actorv2::ipld_hamt::Hamt as HamtV2;
+use actor::actorv3::ipld_amt::Amt as AmtV3;
+use actor::actorv3::ipld_hamt::Hamt as HamtV3;
 
 use cid::Cid;
 use forest_hash_utils::{BytesKey, Hash};

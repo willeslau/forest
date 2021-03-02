@@ -2596,6 +2596,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "forest_vm_migration"
+version = "0.3.1"
+dependencies = [
+ "actor_interface",
+ "fil_clock",
+ "fil_types",
+ "forest_address",
+ "forest_bigint",
+ "forest_cid",
+ "forest_encoding",
+ "forest_hash_utils",
+ "forest_json_utils",
+ "forest_vm",
+ "ipld_blockstore",
+ "serde",
+ "state_tree",
+]
+
+[[package]]
 name = "form_urlencoded"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
