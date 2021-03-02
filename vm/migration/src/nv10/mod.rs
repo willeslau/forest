@@ -1,6 +1,6 @@
 mod init_actor;
 mod util;
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error as StdError};
 
 use cid::Cid;
 use clock::ChainEpoch;
@@ -8,20 +8,27 @@ use ipld_blockstore::BlockStore;
 
 use state_tree::StateTree;
 
-pub struct ActorMigrations {
+use crate::Migrator;
 
+pub struct ActorMigrations<BS:BlockStore> {
+    migration: Box<dyn Migrator<BS>>
 }
 
 pub fn migrate_state_tree<BS: BlockStore>(
     store: &BS,
-    actors_root_in: Cid,
+    state_root_in: Cid,
     prior_epoch: ChainEpoch,
-) {
-    // let migrations: HashMap<Cid, ActorMigrations> = HashMap::new();
-    // migrations.insert(actorv2::INIT_ACTOR_CODE_ID)
+) -> Result<Cid, Box<dyn StdError>>{
+    let mut migrations: HashMap<Cid, Box<dyn Migrator<BS>>> = HashMap::new();
+
+    
+    migrations.insert(*actor::actorv2::INIT_ACTOR_CODE_ID, Box::new(init_actor::InitMigrator{}));
     
 
     // Load input and output StateTrees
-    // let actors_in = StateTree::new();
+    let state_in = StateTree::new_from_root(store, &state_root_in)?;
+    let state_out = StateTree::new(store, fil_types::StateTreeVersion::V2)?;
+
+
     todo!()
 }

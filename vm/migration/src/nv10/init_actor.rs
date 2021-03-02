@@ -11,8 +11,8 @@ use actor::actorv2::init::State as StateV2;
 use actor::actorv3::{init::State as StateV3, INIT_ACTOR_CODE_ID};
 pub struct InitMigrator {}
 
-impl Migrator for InitMigrator {
-    fn migrate_state<BS: BlockStore>(
+impl <BS: BlockStore>Migrator<BS> for InitMigrator {
+    fn migrate_state(
         &self,
         store: &BS,
         input: ActorMigrationInput,

@@ -20,8 +20,8 @@ pub struct ActorMigrationOutput {
     pub new_head: Cid,
 }
 
-pub trait Migrator {
-    fn migrate_state<BS: BlockStore>(
+pub trait Migrator<BS: BlockStore> {
+    fn migrate_state(
         &self,
         store: &BS,
         input: ActorMigrationInput,
