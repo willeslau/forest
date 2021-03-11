@@ -6,45 +6,50 @@ edition = "2018"
 
 [dependencies]
 utils = { path = "../utils" }
-libp2p = { version = "0.24", default-features = false, features = [
+networks = { path = "../../types/networks" }
+libp2p = { version = "0.35", default-features = false, features = [
     "gossipsub",
     "kad",
     "identify",
     "ping",
-    "mdns-async-std",
+    "mdns",
     "noise",
     "yamux",
-    "tcp-async-std",
+    "tcp-async-io",
     "dns",
-    "mplex"
+    "mplex",
+    "request-response",
+    "websocket"
 ] }
-libp2p-request-response = { git = "https://github.com/ChainSafe/rust-libp2p", rev = "b1fe08464ce4d395e92a5725202caedeb3a60165" }
 futures = "0.3.5"
 futures-util = "0.3.5"
 futures_codec = "0.4.0"
 log = "0.4.8"
-async-std = { version = "1.6.3", features = ["unstable"] }
+async-std = "1.9"
 serde = { version = "1.0", features = ["derive"] }
 forest_blocks = { path = "../../blockchain/blocks" }
-forest_message = { path = "../../vm/message" }
-forest_encoding = { path = "../../encoding" }
-forest_cid = { path = "../../ipld/cid" }
-bytes = "0.5.2"
+forest_message = "0.6"
+forest_encoding = "0.2.1"
+forest_cid = { version = "0.3" }
+bytes = "1.0"
 fnv = "1.0.6"
 smallvec = "1.1.0"
 chain = { path = "../../blockchain/chain" }
-clock = { path = "../clock" }
-db = { path = "../db" }
+clock = { package = "fil_clock", path = "../clock" }
+db = { package = "forest_db", version = "0.1" }
 forest_car = { path = "../../ipld/car" }
 num-bigint = { path = "../../utils/bigint", package = "forest_bigint" }
-libp2p-bitswap = "=0.6.1"
+libp2p-bitswap = { git = "https://github.com/ChainSafe/libp2p-bitswap", rev = "1ee048077cfdfc0a3bb16b236c0c308b1c4b52fa" }
 tiny-cid = "0.2.0"
-ipld_blockstore = { path = "../../ipld/blockstore" }
+ipld_blockstore = "0.1"
 async-trait = "0.1"
-message_pool = { path = "../../blockchain/message_pool" }
+lazy_static = "1.4"
+futures_cbor_codec = { git = "https://github.com/najamelan/futures_cbor_codec", rev = "de08e31530513f993cbf5efef7311ac5194b2256" }
+git-version = "0.3.4"
 
 [dev-dependencies]
-forest_address = { path = "../../vm/address" }
+forest_address = "0.3"
 num-bigint = { path = "../../utils/bigint", package = "forest_bigint" }
-crypto = { package = "forest_crypto", path = "../../crypto" }
+crypto = { package = "forest_crypto", version = "0.4" }
 genesis = { path = "../../utils/genesis", features = ["testing"] }
+async-std = { version = "1.9", features = ["attributes"] }

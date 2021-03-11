@@ -1,7 +1,7 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use crate::{make_map, make_map_with_root, BytesKey, Map};
+use crate::{make_empty_map, make_map_with_root_and_bitwidth, BytesKey, Map};
 use cid::Cid;
 use ipld_amt::Amt;
 use ipld_blockstore::BlockStore;
@@ -11,19 +11,29 @@ use std::error::Error as StdError;
 
 /// Multimap stores multiple values per key in a Hamt of Amts.
 /// The order of insertion of values for each key is retained.
-pub struct Multimap<'a, BS>(Map<'a, BS, Cid>);
+pub struct Multimap<'a, BS>(Map<'a, BS, Cid>, usize);
 impl<'a, BS> Multimap<'a, BS>
 where
     BS: BlockStore,
 {
     /// Initializes a new empty multimap.
-    pub fn new(bs: &'a BS) -> Self {
-        Self(make_map(bs))
+    /// The outer_bitwidth is the width of the HAMT and the
+    /// inner_bitwidth is the width of the AMTs inside of it.
+    pub fn new(bs: &'a BS, outer_bitwidth: u32, inner_bitwidth: usize) -> Self {
+        Self(make_empty_map(bs, outer_bitwidth), inner_bitwidth)
     }
 
     /// Initializes a multimap from a root Cid
-    pub fn from_root(bs: &'a BS, cid: &Cid) -> Result<Self, Error> {
-        Ok(Self(make_map_with_root(cid, bs)?))
+    pub fn from_root(
+        bs: &'a BS,
+        cid: &Cid,
+        outer_bitwidth: u32,
+        inner_bitwidth: usize,
+    ) -> Result<Self, Error> {
+        Ok(Self(
+            make_map_with_root_and_bitwidth(cid, bs, outer_bitwidth)?,
+            inner_bitwidth,
+        ))
     }
 
     /// Retrieve root from the multimap.
@@ -40,7 +50,7 @@ where
         // Get construct amt from retrieved cid or create new
         let mut arr = self
             .get::<V>(&key)?
-            .unwrap_or_else(|| Amt::new(self.0.store()));
+            .unwrap_or_else(|| Amt::new_with_bit_width(self.0.store(), self.1));
 
         // Set value at next index
         arr.set(arr.count(), value)?;
@@ -49,7 +59,8 @@ where
         let new_root = arr.flush()?;
 
         // Set hamt node to array root
-        Ok(self.0.set(key, new_root)?)
+        self.0.set(key, new_root)?;
+        Ok(())
     }
 
     /// Gets the Array of value type `V` using the multimap store.
@@ -70,7 +81,7 @@ where
         // Remove entry from table
         self.0
             .delete(key)?
-            .ok_or_else(|| "failed to delete from multimap")?;
+            .ok_or("failed to delete from multimap")?;
 
         Ok(())
     }
@@ -79,7 +90,7 @@ where
     pub fn for_each<F, V>(&self, key: &[u8], f: F) -> Result<(), Box<dyn StdError>>
     where
         V: Serialize + DeserializeOwned,
-        F: FnMut(u64, &V) -> Result<(), Box<dyn StdError>>,
+        F: FnMut(usize, &V) -> Result<(), Box<dyn StdError>>,
     {
         if let Some(amt) = self.get::<V>(key)? {
             amt.for_each(f)?;

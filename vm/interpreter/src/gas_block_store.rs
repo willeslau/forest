@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use super::gas_tracker::{GasTracker, PriceList};
-use cid::{multihash::MultihashDigest, Cid};
+use cid::{Cid, Code};
 use db::{Error, Store};
 use forest_encoding::{de::DeserializeOwned, ser::Serialize, to_vec};
 use ipld_blockstore::BlockStore;
@@ -31,17 +31,16 @@ where
         self.store.get(cid)
     }
 
-    fn put<S, T>(&self, obj: &S, hash: T) -> Result<Cid, Box<dyn StdError>>
+    fn put<S>(&self, obj: &S, code: Code) -> Result<Cid, Box<dyn StdError>>
     where
         S: Serialize,
-        T: MultihashDigest,
     {
         let bytes = to_vec(obj)?;
         self.gas
             .borrow_mut()
             .charge_gas(self.price_list.on_ipld_put(bytes.len()))?;
 
-        Ok(self.store.put_raw(bytes, hash)?)
+        self.store.put_raw(bytes, code)
     }
 }
 
@@ -98,7 +97,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cid::multihash::Blake2b256;
+    use crate::price_list_by_epoch;
+    use cid::Code::Blake2b256;
     use db::MemoryDB;
     use vm::{ActorError, ExitCode};
 
@@ -110,7 +110,7 @@ mod tests {
                 ipld_get_base: 4,
                 ipld_put_base: 2,
                 ipld_put_per_byte: 1,
-                ..Default::default()
+                ..price_list_by_epoch(0)
             },
             gas: Rc::new(RefCell::new(GasTracker::new(5000, 0))),
             store: &db,
@@ -129,7 +129,7 @@ mod tests {
         let gbs = GasBlockStore {
             price_list: PriceList {
                 ipld_put_base: 12,
-                ..Default::default()
+                ..price_list_by_epoch(0)
             },
             gas: Rc::new(RefCell::new(GasTracker::new(10, 0))),
             store: &db,

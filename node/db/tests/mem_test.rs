@@ -3,15 +3,7 @@
 
 mod subtests;
 
-use db::MemoryDB;
-
-#[test]
-fn mem_db_open() {
-    let mut db = MemoryDB::default();
-    subtests::open(&mut db);
-    // Calling open on opened db should not error
-    subtests::open(&mut db);
-}
+use forest_db::MemoryDB;
 
 #[test]
 fn mem_db_write() {

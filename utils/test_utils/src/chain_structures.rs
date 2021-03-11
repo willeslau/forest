@@ -4,30 +4,26 @@
 #![cfg(feature = "test_constructors")]
 
 use address::Address;
-use blocks::{
-    Block, BlockHeader, EPostProof, EPostTicket, FullTipset, Ticket, Tipset, TipsetKeys, TxMeta,
-};
-use chain::TipsetMetadata;
-use cid::{multihash::Blake2b256, Cid};
+use blocks::{Block, BlockHeader, FullTipset, Ticket, Tipset, TipsetKeys, TxMeta};
+use cid::{Cid, Code::Blake2b256};
 use crypto::{Signature, Signer, VRFProof};
-use encoding::{from_slice, to_vec};
-use forest_libp2p::blocksync::{
-    BlockSyncResponse, BlockSyncResponseStatus, CompactedMessages, TipsetBundle,
+use encoding::to_vec;
+use forest_libp2p::chain_exchange::{
+    ChainExchangeResponse, ChainExchangeResponseStatus, CompactedMessages, TipsetBundle,
 };
 use message::{SignedMessage, UnsignedMessage};
 use num_bigint::BigInt;
+use std::convert::TryFrom;
 use std::error::Error;
-use std::sync::Arc;
 
 /// Defines a TipsetKey used in testing
 pub fn template_key(data: &[u8]) -> Cid {
-    Cid::new_from_cbor(data, Blake2b256)
+    cid::new_from_cbor(data, Blake2b256)
 }
 
 /// Defines a block header used in testing
 fn template_header(
     ticket_p: Vec<u8>,
-    cid: Cid,
     timestamp: u64,
     epoch: i64,
     msg_root: Cid,
@@ -36,7 +32,7 @@ fn template_header(
     let cids = construct_keys();
     BlockHeader::builder()
         .parents(TipsetKeys {
-            cids: vec![cids[0].clone()],
+            cids: vec![cids[0]],
         })
         .miner_address(Address::new_actor(&ticket_p))
         .timestamp(timestamp)
@@ -47,7 +43,6 @@ fn template_header(
         .signature(Some(Signature::new_bls(vec![1, 4, 3, 6, 7, 1, 2])))
         .epoch(epoch)
         .weight(BigInt::from(weight))
-        .cached_cid(cid)
         .build()
         .unwrap()
 }
@@ -67,25 +62,24 @@ pub fn construct_headers(epoch: i64, weight: u64) -> Vec<BlockHeader> {
     let data0: Vec<u8> = vec![1, 4, 3, 6, 7, 1, 2];
     let data1: Vec<u8> = vec![1, 4, 3, 6, 1, 1, 2, 2, 4, 5, 3, 12, 2, 1];
     let data2: Vec<u8> = vec![1, 4, 3, 6, 1, 1, 2, 2, 4, 5, 3, 12, 2];
-    let cids = construct_keys();
     // setup a deterministic message root within block header
     let meta = TxMeta {
-        bls_message_root: Cid::from_raw_cid(
+        bls_message_root: Cid::try_from(
             "bafy2bzacec4insvxxjqhl4sqdfjioz3gotxjrflb3cdpd3trtvw3zvm75jdzc",
         )
         .unwrap(),
-        secp_message_root: Cid::from_raw_cid(
+        secp_message_root: Cid::try_from(
             "bafy2bzacecbnlmwafpin7d4wmnb6sgtsdo6cfp4dhjbroq2g574eqrzc65e5a",
         )
         .unwrap(),
     };
     let bz = to_vec(&meta).unwrap();
-    let msg_root = Cid::new_from_cbor(&bz, Blake2b256);
+    let msg_root = cid::new_from_cbor(&bz, Blake2b256);
 
     return vec![
-        template_header(data0, cids[0].clone(), 1, epoch, msg_root.clone(), weight),
-        template_header(data1, cids[1].clone(), 2, epoch, msg_root.clone(), weight),
-        template_header(data2, cids[2].clone(), 3, epoch, msg_root, weight),
+        template_header(data0, 1, epoch, msg_root, weight),
+        template_header(data1, 2, epoch, msg_root, weight),
+        template_header(data2, 3, epoch, msg_root, weight),
     ];
 }
 
@@ -93,21 +87,6 @@ pub fn construct_headers(epoch: i64, weight: u64) -> Vec<BlockHeader> {
 pub fn construct_ticket() -> Ticket {
     let vrf_result = VRFProof::new(base64::decode("lmRJLzDpuVA7cUELHTguK9SFf+IVOaySG8t/0IbVeHHm3VwxzSNhi1JStix7REw6Apu6rcJQV1aBBkd39gQGxP8Abzj8YXH+RdSD5RV50OJHi35f3ixR0uhkY6+G08vV").unwrap());
     Ticket::new(vrf_result)
-}
-
-/// Returns a deterministic EPostProof to be used for testing
-pub fn construct_epost_proof() -> EPostProof {
-    let etik = EPostTicket {
-        partial: base64::decode("TFliU6/pdbjRyomejlXMS77qjYdMDty07vigvXH/vjI=").unwrap(),
-        sector_id: 284,
-        challenge_index: 5,
-    };
-
-    EPostProof{
-        proof: from_slice(&base64::decode("rn85uiodD29xvgIuvN5/g37IXghPtVtl3li9y+nPHCueATI1q1/oOn0FEIDXRWHLpZ4CzAqOdQh9rdHih+BI5IsdI1YpwV+UdNDspJVW/cinVE+ZoiO86ap30l77RLkrEwxUZ5v8apsSRUizoXh1IFrHgK06gk1wl5LaxY2i/CQgBoWIPx9o2EYMBbNfQcu+pRzFmiDjzT6BIhYrPbo+gm6wHFiNhp3FvAuSUH2/N+5MKZo7Eh7LwgGLc0fL4MEI").unwrap()).unwrap(),
-        post_rand: base64::decode("hdodcCz5kLJYRb9PT7m4z9kRvc9h02KMye9DOklnQ8v05X2ds9rgNhcTV+d/cXS+AvADHpepQODMV/6E1kbT99kdFt0xMNUsO/9YbH4ujif7sY0P8pgRAunlMgPrx7Sx").unwrap(),
-        candidates: vec![etik]
-    }
 }
 
 /// Returns a full block used for testing
@@ -144,18 +123,6 @@ pub fn construct_full_tipset() -> FullTipset {
     });
 
     FullTipset::new(blocks).unwrap()
-}
-
-/// Returns TipsetMetadata used for testing
-pub fn construct_tipset_metadata() -> TipsetMetadata {
-    const EPOCH: i64 = 1;
-    const WEIGHT: u64 = 10;
-    let tip_set = construct_tipset(EPOCH, WEIGHT);
-    TipsetMetadata {
-        tipset_state_root: tip_set.blocks()[0].state_root().clone(),
-        tipset_receipts_root: tip_set.blocks()[0].message_receipts().clone(),
-        tipset: Arc::new(tip_set),
-    }
 }
 
 const DUMMY_SIG: [u8; 1] = [0u8];
@@ -199,23 +166,23 @@ pub fn construct_tipset_bundle(epoch: i64, weight: u64) -> TipsetBundle {
 pub fn construct_dummy_header() -> BlockHeader {
     BlockHeader::builder()
         .miner_address(Address::new_id(1000))
-        .messages(Cid::new_from_cbor(&[1, 2, 3], Blake2b256))
-        .message_receipts(Cid::new_from_cbor(&[1, 2, 3], Blake2b256))
-        .state_root(Cid::new_from_cbor(&[1, 2, 3], Blake2b256))
-        .build_and_validate()
+        .messages(cid::new_from_cbor(&[1, 2, 3], Blake2b256))
+        .message_receipts(cid::new_from_cbor(&[1, 2, 3], Blake2b256))
+        .state_root(cid::new_from_cbor(&[1, 2, 3], Blake2b256))
+        .build()
         .unwrap()
 }
 
 /// Returns a RPCResponse used for testing
-pub fn construct_blocksync_response() -> BlockSyncResponse {
+pub fn construct_chain_exchange_response() -> ChainExchangeResponse {
     // construct block sync response
-    BlockSyncResponse {
+    ChainExchangeResponse {
         chain: vec![
             construct_tipset_bundle(3, 10),
             construct_tipset_bundle(2, 10),
             construct_tipset_bundle(1, 10),
         ],
-        status: BlockSyncResponseStatus::Success,
+        status: ChainExchangeResponseStatus::Success,
         message: "message".to_owned(),
     }
 }

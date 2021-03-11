@@ -2,26 +2,24 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use async_std::{
+    channel::bounded,
     fs::{self, File},
-    io::{copy, BufRead, BufWriter},
-    sync::{channel, Arc},
+    io::{copy, BufWriter},
+    sync::Arc,
     task,
 };
 use blake2b_simd::{Hash, State as Blake2b};
 use core::time::Duration;
 use fil_types::SectorSize;
-use futures::prelude::*;
 use log::{info, warn};
-use pbr::{MultiBar, ProgressBar, Units};
-use pin_project_lite::pin_project;
+use net_utils::FetchProgress;
+use pbr::{MultiBar, Units};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use std::fs::File as SyncFile;
 use std::io::{self, copy as sync_copy, BufReader as SyncBufReader, ErrorKind, Stdout};
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
-use std::task::{Context, Poll};
 use surf::Client;
 
 const GATEWAY: &str = "https://proofs.filecoin.io/ipfs/";
@@ -93,7 +91,7 @@ pub async fn get_params(
 
     if let Some(multi_bar) = mb {
         let cmb = multi_bar.clone();
-        let (mb_send, mb_rx) = channel(1);
+        let (mb_send, mb_rx) = bounded(1);
         let mb = task::spawn(async move {
             while mb_rx.try_recv().is_err() {
                 cmb.listen();
@@ -103,7 +101,10 @@ pub async fn get_params(
         for t in tasks {
             t.await;
         }
-        mb_send.send(()).await;
+        mb_send
+            .send(())
+            .await
+            .expect("Receiver should not be dropped");
         mb.await;
     } else {
         for t in tasks {
@@ -130,13 +131,13 @@ async fn fetch_verify_params(
 ) -> Result<(), Box<dyn StdError>> {
     let mut path: PathBuf = param_dir().into();
     path.push(name);
-    let path = Arc::new(path);
+    let path: Arc<Path> = Arc::from(path.as_path());
 
     match check_file(path.clone(), info.clone()).await {
         Ok(()) => return Ok(()),
         Err(e) => {
             if e.kind() != ErrorKind::NotFound {
-                warn!("{}", e)
+                warn!("Error checking file: {}", e);
             }
         }
     }
@@ -147,45 +148,6 @@ async fn fetch_verify_params(
         // TODO remove invalid file
         e.into()
     })
-}
-
-pin_project! {
-    struct FetchProgress<R> {
-        #[pin]
-        inner: R,
-        progress_bar: ProgressBar<pbr::Pipe>,
-    }
-}
-
-impl<R> FetchProgress<R> {
-    fn finish(&mut self) {
-        self.progress_bar.finish();
-    }
-}
-
-impl<R: AsyncRead + Unpin> AsyncRead for FetchProgress<R> {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<Result<usize, io::Error>> {
-        let r = Pin::new(&mut self.inner).poll_read(cx, buf);
-        if let Poll::Ready(Ok(size)) = r {
-            self.progress_bar.add(size as u64);
-        }
-        r
-    }
-}
-
-impl<R: BufRead + Unpin> BufRead for FetchProgress<R> {
-    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<&'_ [u8]>> {
-        let this = self.project();
-        this.inner.poll_fill_buf(cx)
-    }
-
-    fn consume(mut self: Pin<&mut Self>, amt: usize) {
-        Pin::new(&mut self.inner).consume(amt)
-    }
 }
 
 async fn fetch_params(
@@ -235,7 +197,7 @@ async fn fetch_params(
     Ok(())
 }
 
-async fn check_file(path: Arc<PathBuf>, info: Arc<ParameterData>) -> Result<(), io::Error> {
+async fn check_file(path: Arc<Path>, info: Arc<ParameterData>) -> Result<(), io::Error> {
     if std::env::var(TRUST_PARAMS_ENV) == Ok("1".to_owned()) {
         warn!("Assuming parameter files are okay. DO NOT USE IN PRODUCTION");
         return Ok(());

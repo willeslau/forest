@@ -1,14 +1,15 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use actor::Multimap;
 use address::Address;
+use fil_types::HAMT_BIT_WIDTH;
+use forest_actor::Multimap;
 use ipld_amt::Amt;
 
 #[test]
 fn basic_add() {
     let store = db::MemoryDB::default();
-    let mut mm = Multimap::new(&store);
+    let mut mm = Multimap::new(&store, HAMT_BIT_WIDTH, 3);
 
     let addr = Address::new_id(100);
     assert_eq!(mm.get::<u64>(&addr.to_bytes()).unwrap(), None);
@@ -24,7 +25,7 @@ fn basic_add() {
 #[test]
 fn for_each() {
     let store = db::MemoryDB::default();
-    let mut mm = Multimap::new(&store);
+    let mut mm = Multimap::new(&store, HAMT_BIT_WIDTH, 3);
 
     let addr = Address::new_id(100);
     assert_eq!(mm.get::<u64>(&addr.to_bytes()).unwrap(), None);
@@ -34,7 +35,7 @@ fn for_each() {
     mm.add(addr.to_bytes().into(), 3).unwrap();
     mm.add("Some other string".into(), 7).unwrap();
 
-    let mut vals: Vec<(u64, u64)> = Vec::new();
+    let mut vals: Vec<(usize, u64)> = Vec::new();
     mm.for_each(&addr.to_bytes(), |i, v| {
         vals.push((i, *v));
         Ok(())
@@ -47,7 +48,7 @@ fn for_each() {
 #[test]
 fn remove_all() {
     let store = db::MemoryDB::default();
-    let mut mm = Multimap::new(&store);
+    let mut mm = Multimap::new(&store, HAMT_BIT_WIDTH, 3);
 
     let addr1 = Address::new_id(100);
     let addr2 = Address::new_id(101);

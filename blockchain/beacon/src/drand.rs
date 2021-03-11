@@ -11,12 +11,8 @@ use clock::ChainEpoch;
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use sha2::Digest;
 use std::borrow::Cow;
-use std::convert::TryFrom;
 use std::error;
-
-/// Default endpoint for the drand beacon node.
-// TODO this URL is only valid until smoke fork, should setup schedule for drand upgrade
-pub const DEFAULT_DRAND_URL: &str = "https://pl-us.incentinet.drand.sh";
+use std::sync::Arc;
 
 /// Enviromental Variable to ignore Drand. Lotus parallel is LOTUS_IGNORE_DRAND
 pub const IGNORE_DRAND_VAR: &str = "IGNORE_DRAND";
@@ -25,16 +21,100 @@ pub const IGNORE_DRAND_VAR: &str = "IGNORE_DRAND";
 /// This is shared by all participants on the Drand network.
 #[derive(Clone, Debug, SerdeSerialize, SerdeDeserialize)]
 pub struct DrandPublic {
+    /// Public key used to verify beacon entries.
     pub coefficient: Vec<u8>,
 }
 
 impl DrandPublic {
-    pub fn key(&self) -> PublicKey {
-        PublicKey::from_bytes(&self.coefficient).unwrap()
+    /// Returns the public key for the Drand beacon.
+    pub fn key(&self) -> Result<PublicKey, bls_signatures::Error> {
+        PublicKey::from_bytes(&self.coefficient)
     }
 }
 
+#[derive(Clone)]
+/// Config used when initializing a Drand beacon.
+pub struct DrandConfig<'a> {
+    /// Url endpoint to send JSON http requests to.
+    pub server: &'static str,
+    /// Info about the beacon chain, used to verify correctness of endpoint.
+    pub chain_info: ChainInfo<'a>,
+}
+
+/// Contains the vector of BeaconPoints, which are mappings of epoch to the Randomness beacons used.
+pub struct BeaconSchedule<T>(pub Vec<BeaconPoint<T>>);
+
+impl<T> BeaconSchedule<T>
+where
+    T: Beacon,
+{
+    /// Returns the beacon entries for a given epoch.
+    /// When the beacon for the given epoch is on a new beacon, randomness entries are taken
+    /// from the last two rounds.
+    pub async fn beacon_entries_for_block(
+        &self,
+        epoch: ChainEpoch,
+        parent_epoch: ChainEpoch,
+        prev: &BeaconEntry,
+    ) -> Result<Vec<BeaconEntry>, Box<dyn error::Error>> {
+        let (cb_epoch, curr_beacon) = self.beacon_for_epoch(epoch)?;
+        let (pb_epoch, _) = self.beacon_for_epoch(parent_epoch)?;
+        if cb_epoch != pb_epoch {
+            // Fork logic, take entries from the last two rounds of the new beacon.
+            let round = curr_beacon.max_beacon_round_for_epoch(epoch);
+            let mut entries = Vec::with_capacity(2);
+            entries.push(curr_beacon.entry(round - 1).await?);
+            entries.push(curr_beacon.entry(round).await?);
+            return Ok(entries);
+        }
+        let max_round = curr_beacon.max_beacon_round_for_epoch(epoch);
+        if max_round == prev.round() {
+            // Our chain has encountered two epochs before beacon chain has elapsed one,
+            // return no beacon entries for this epoch.
+            return Ok(vec![]);
+        }
+        // TODO: this is a sketchy way to handle the genesis block not having a beacon entry
+        let prev_round = if prev.round() == 0 {
+            max_round - 1
+        } else {
+            prev.round()
+        };
+
+        let mut cur = max_round;
+        let mut out = Vec::new();
+        while cur > prev_round {
+            // Push all entries from rounds elapsed since the last chain epoch.
+            let entry = curr_beacon.entry(cur).await?;
+            cur = entry.round() - 1;
+            out.push(entry);
+        }
+        out.reverse();
+        Ok(out)
+    }
+
+    pub fn beacon_for_epoch(
+        &self,
+        epoch: ChainEpoch,
+    ) -> Result<(ChainEpoch, &T), Box<dyn error::Error>> {
+        // Iterate over beacon schedule to find the latest randomness beacon to use.
+        Ok(self
+            .0
+            .iter()
+            .rev()
+            .find(|upgrade| epoch >= upgrade.height)
+            .map(|upgrade| (upgrade.height, upgrade.beacon.as_ref()))
+            .ok_or("Invalid beacon schedule, no valid beacon")?)
+    }
+}
+
+/// Contains height at which the beacon is activated, as well as the beacon itself.
+pub struct BeaconPoint<T> {
+    pub height: ChainEpoch,
+    pub beacon: Arc<T>,
+}
+
 #[async_trait]
+/// Trait used as the interface to be able to retrieve bytes from a randomness beacon.
 pub trait Beacon
 where
     Self: Sized,
@@ -50,20 +130,26 @@ where
     /// In the future, we will cache values, and support streaming.
     async fn entry(&self, round: u64) -> Result<BeaconEntry, Box<dyn error::Error>>;
 
+    /// Returns the most recent beacon round for the given Filecoin chain epoch.
     fn max_beacon_round_for_epoch(&self, fil_epoch: ChainEpoch) -> u64;
 }
 
-#[derive(SerdeDeserialize, SerdeSerialize, Debug, Clone)]
-pub struct ChainInfo {
-    public_key: String,
-    period: i32,
-    genesis_time: i32,
-    hash: String,
+#[derive(SerdeDeserialize, SerdeSerialize, Debug, Clone, PartialEq, Default)]
+/// Contains all the info about a Drand beacon chain.
+/// API reference: https://drand.love/developer/http-api/#info
+/// note: groupHash does not exist in docs currently, but is returned.
+pub struct ChainInfo<'a> {
+    pub public_key: Cow<'a, str>,
+    pub period: i32,
+    pub genesis_time: i32,
+    pub hash: Cow<'a, str>,
     #[serde(rename = "groupHash")]
-    group_hash: String,
+    pub group_hash: Cow<'a, str>,
 }
 
 #[derive(SerdeDeserialize, SerdeSerialize, Debug, Clone)]
+/// Json beacon entry format. This matches the drand round JSON serialization
+/// API reference: https://drand.love/developer/http-api/#public-round.
 pub struct BeaconEntryJson {
     round: u64,
     randomness: String,
@@ -71,8 +157,10 @@ pub struct BeaconEntryJson {
     previous_signature: String,
 }
 
+/// Drand randomness beacon that can be used to generate randomness for the Filecoin chain.
+/// Primary use is to satisfy the [Beacon] trait.
 pub struct DrandBeacon {
-    url: Cow<'static, str>,
+    url: &'static str,
 
     pub_key: DrandPublic,
     /// Interval between beacons, in seconds.
@@ -88,26 +176,28 @@ pub struct DrandBeacon {
 impl DrandBeacon {
     /// Construct a new DrandBeacon.
     pub async fn new(
-        url: impl Into<Cow<'static, str>>,
-        pub_key: DrandPublic,
         genesis_ts: u64,
         interval: u64,
+        config: &DrandConfig<'_>,
     ) -> Result<Self, Box<dyn error::Error>> {
         if genesis_ts == 0 {
             panic!("Genesis timestamp cannot be 0")
         }
-        let url = url.into();
-        let chain_info: ChainInfo = surf::get(&format!("{}/info", &url)).recv_json().await?;
-        let remote_pub_key = hex::decode(chain_info.public_key)?;
-        if remote_pub_key != pub_key.coefficient {
-            return Err(Box::try_from(
-                "Drand pub key from config is different than one on drand servers",
-            )?);
+
+        let chain_info = &config.chain_info;
+
+        if cfg!(debug_assertions) {
+            let remote_chain_info: ChainInfo = surf::get(&format!("{}/info", &config.server))
+                .recv_json()
+                .await?;
+            debug_assert!(&remote_chain_info == chain_info);
         }
 
         Ok(Self {
-            url,
-            pub_key,
+            url: config.server,
+            pub_key: DrandPublic {
+                coefficient: hex::decode(chain_info.public_key.as_ref())?,
+            },
             interval: chain_info.period as u64,
             drand_gen_time: chain_info.genesis_time as u64,
             fil_round_time: interval,
@@ -116,8 +206,7 @@ impl DrandBeacon {
         })
     }
 }
-/// This struct allows you to talk to a Drand node over GRPC.
-/// Use this to source randomness and to verify Drand beacon entries.
+
 #[async_trait]
 impl Beacon for DrandBeacon {
     async fn verify_entry(
@@ -136,14 +225,13 @@ impl Beacon for DrandBeacon {
         msg.write_u64::<BigEndian>(curr.round())?;
         // H(prev sig | curr_round)
         let digest = sha2::Sha256::digest(&msg);
-        // Hash to G2
-        let digest = bls_signatures::hash(&digest);
         // Signature
         let sig = Signature::from_bytes(curr.data())?;
-        let sig_match = bls_signatures::verify(&sig, &[digest], &[self.pub_key.key()]);
+        let sig_match = bls_signatures::verify_messages(&sig, &[&digest], &[self.pub_key.key()?]);
 
         // Cache the result
-        if sig_match && !self.local_cache.read().await.contains_key(&curr.round()) {
+        let contains_curr = self.local_cache.read().await.contains_key(&curr.round());
+        if sig_match && !contains_curr {
             self.local_cache
                 .write()
                 .await
@@ -153,8 +241,9 @@ impl Beacon for DrandBeacon {
     }
 
     async fn entry(&self, round: u64) -> Result<BeaconEntry, Box<dyn error::Error>> {
-        match self.local_cache.read().await.get(&round) {
-            Some(cached_entry) => Ok(cached_entry.clone()),
+        let cached: Option<BeaconEntry> = self.local_cache.read().await.get(&round).cloned();
+        match cached {
+            Some(cached_entry) => Ok(cached_entry),
             None => {
                 let url = format!("{}/public/{}", self.url, round);
                 let resp: BeaconEntryJson = surf::get(&url).recv_json().await?;

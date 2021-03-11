@@ -1,20 +1,23 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use actor::{init, INIT_ACTOR_ADDR};
+use actor::{init, ActorVersion, Map};
 use address::{Address, Protocol};
-use cid::{multihash::Blake2b256, Cid};
-use fil_types::HAMT_BIT_WIDTH;
+use cid::{Cid, Code::Blake2b256};
+use fil_types::{StateInfo0, StateRoot, StateTreeVersion};
 use ipld_blockstore::BlockStore;
-use ipld_hamt::Hamt;
-use parking_lot::RwLock;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error as StdError;
 use vm::ActorState;
 
-/// State tree implementation using hamt
+/// State tree implementation using hamt. This structure is not threadsafe and should only be used
+/// in sync contexts.
 pub struct StateTree<'db, S> {
-    hamt: Hamt<'db, S, ActorState>,
+    hamt: Map<'db, S, ActorState>,
+
+    version: StateTreeVersion,
+    info: Option<Cid>,
 
     /// State cache
     snaps: StateSnapshots,
@@ -26,32 +29,22 @@ struct StateSnapshots {
 }
 
 /// State snap shot layer
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct StateSnapLayer {
-    actors: RwLock<HashMap<Address, Option<ActorState>>>,
-    resolve_cache: RwLock<HashMap<Address, Address>>,
-}
-
-impl StateSnapLayer {
-    /// Snapshot layer constructor
-    fn new() -> Self {
-        Self {
-            actors: RwLock::new(HashMap::default()),
-            resolve_cache: RwLock::new(HashMap::default()),
-        }
-    }
+    actors: RefCell<HashMap<Address, Option<ActorState>>>,
+    resolve_cache: RefCell<HashMap<Address, Address>>,
 }
 
 impl StateSnapshots {
     /// State snapshot constructor
     fn new() -> Self {
         Self {
-            layers: vec![StateSnapLayer::new()],
+            layers: vec![StateSnapLayer::default()],
         }
     }
 
     fn add_layer(&mut self) {
-        self.layers.push(StateSnapLayer::new())
+        self.layers.push(StateSnapLayer::default())
     }
 
     fn drop_layer(&mut self) -> Result<(), String> {
@@ -75,8 +68,13 @@ impl StateSnapshots {
                 )
             })?
             .actors
-            .write()
-            .extend(self.layers[&self.layers.len() - 1].actors.write().drain());
+            .borrow_mut()
+            .extend(
+                self.layers[&self.layers.len() - 1]
+                    .actors
+                    .borrow_mut()
+                    .drain(),
+            );
 
         self.layers
             .get(&self.layers.len() - 2)
@@ -87,11 +85,11 @@ impl StateSnapshots {
                 )
             })?
             .resolve_cache
-            .write()
+            .borrow_mut()
             .extend(
                 self.layers[&self.layers.len() - 1]
                     .resolve_cache
-                    .write()
+                    .borrow_mut()
                     .drain(),
             );
 
@@ -100,7 +98,7 @@ impl StateSnapshots {
 
     fn resolve_address(&self, addr: &Address) -> Option<Address> {
         for layer in self.layers.iter().rev() {
-            if let Some(res_addr) = layer.resolve_cache.read().get(addr).cloned() {
+            if let Some(res_addr) = layer.resolve_cache.borrow().get(addr).cloned() {
                 return Some(res_addr);
             }
         }
@@ -122,7 +120,7 @@ impl StateSnapshots {
                 )
             })?
             .resolve_cache
-            .write()
+            .borrow_mut()
             .insert(addr, resolve_addr);
 
         Ok(())
@@ -130,7 +128,7 @@ impl StateSnapshots {
 
     fn get_actor(&self, addr: &Address) -> Option<ActorState> {
         for layer in self.layers.iter().rev() {
-            if let Some(state) = layer.actors.read().get(addr) {
+            if let Some(state) = layer.actors.borrow().get(addr) {
                 return state.clone();
             }
         }
@@ -148,7 +146,7 @@ impl StateSnapshots {
                 )
             })?
             .actors
-            .write()
+            .borrow_mut()
             .insert(addr, Some(actor));
         Ok(())
     }
@@ -163,7 +161,7 @@ impl StateSnapshots {
                 )
             })?
             .actors
-            .write()
+            .borrow_mut()
             .insert(addr, None);
 
         Ok(())
@@ -174,21 +172,50 @@ impl<'db, S> StateTree<'db, S>
 where
     S: BlockStore,
 {
-    pub fn new(store: &'db S) -> Self {
-        let hamt = Hamt::new_with_bit_width(store, HAMT_BIT_WIDTH);
-        Self {
+    pub fn new(store: &'db S, version: StateTreeVersion) -> Result<Self, Box<dyn StdError>> {
+        let info = match version {
+            StateTreeVersion::V0 => None,
+            StateTreeVersion::V1 | StateTreeVersion::V2 => {
+                Some(store.put(&StateInfo0::default(), Blake2b256)?)
+            }
+        };
+
+        let hamt = Map::new(store, ActorVersion::from(version));
+        Ok(Self {
             hamt,
+            version,
+            info,
             snaps: StateSnapshots::new(),
-        }
+        })
     }
 
     /// Constructor for a hamt state tree given an IPLD store
-    pub fn new_from_root(store: &'db S, root: &Cid) -> Result<Self, Box<dyn StdError>> {
-        let hamt = Hamt::load_with_bit_width(root, store, HAMT_BIT_WIDTH)?;
-        Ok(Self {
-            hamt,
-            snaps: StateSnapshots::new(),
-        })
+    pub fn new_from_root(store: &'db S, c: &Cid) -> Result<Self, Box<dyn StdError>> {
+        // Try to load state root, if versioned
+        let (version, info, actors) = if let Ok(Some(StateRoot {
+            version,
+            info,
+            actors,
+        })) = store.get(c)
+        {
+            (version, Some(info), actors)
+        } else {
+            // Fallback to v0 state tree if retrieval fails
+            (StateTreeVersion::V0, None, *c)
+        };
+
+        match version {
+            StateTreeVersion::V0 | StateTreeVersion::V1 | StateTreeVersion::V2 => {
+                let hamt = Map::load(&actors, store, version.into())?;
+
+                Ok(Self {
+                    hamt,
+                    version,
+                    info,
+                    snaps: StateSnapshots::new(),
+                })
+            }
+        }
     }
 
     /// Retrieve store reference to modify db.
@@ -243,14 +270,10 @@ where
         }
 
         let init_act = self
-            .get_actor(&INIT_ACTOR_ADDR)?
+            .get_actor(actor::init::ADDRESS)?
             .ok_or("Init actor address could not be resolved")?;
 
-        let state: init::State = self
-            .hamt
-            .store()
-            .get(&init_act.state)?
-            .ok_or("Could not resolve init actor state")?;
+        let state = init::State::load(self.hamt.store(), &init_act)?;
 
         let a: Address = match state
             .resolve_address(self.store(), addr)
@@ -295,24 +318,18 @@ where
 
     /// Register a new address through the init actor.
     pub fn register_new_address(&mut self, addr: &Address) -> Result<Address, Box<dyn StdError>> {
-        let mut init_act: ActorState = self
-            .get_actor(&INIT_ACTOR_ADDR)?
+        let mut actor: ActorState = self
+            .get_actor(init::ADDRESS)?
             .ok_or("Could not retrieve init actor")?;
 
-        // Get init actor state from store
-        let mut ias: init::State = self
-            .hamt
-            .store()
-            .get(&init_act.state)?
-            .ok_or("Failed to retrieve init actor state")?;
+        let mut ias = init::State::load(self.store(), &actor)?;
 
-        // Create new address with init actor state
         let new_addr = ias.map_address_to_new_id(self.store(), addr)?;
 
         // Set state for init actor in store and update root Cid
-        init_act.state = self.store().put(&ias, Blake2b256)?;
+        actor.state = self.store().put(&ias, Blake2b256)?;
 
-        self.set_actor(&INIT_ACTOR_ADDR, init_act)?;
+        self.set_actor(init::ADDRESS, actor)?;
 
         Ok(new_addr)
     }
@@ -323,9 +340,9 @@ where
         Ok(())
     }
 
-    /// Merges last two snap shot layers
+    /// Merges last two snap shot layers.
     pub fn clear_snapshot(&mut self) -> Result<(), String> {
-        Ok(self.snaps.merge_last_layer()?)
+        self.snaps.merge_last_layer()
     }
 
     /// Revert state cache by removing last snapshot
@@ -345,7 +362,7 @@ where
             .into());
         }
 
-        for (addr, sto) in self.snaps.layers[0].actors.read().iter() {
+        for (addr, sto) in self.snaps.layers[0].actors.borrow().iter() {
             match sto {
                 None => {
                     self.hamt.delete(&addr.to_bytes())?;
@@ -356,6 +373,29 @@ where
             }
         }
 
-        Ok(self.hamt.flush()?)
+        let root = self.hamt.flush()?;
+
+        if matches!(self.version, StateTreeVersion::V0) {
+            Ok(root)
+        } else {
+            Ok(self.store().put(
+                &StateRoot {
+                    version: self.version,
+                    actors: root,
+                    info: self
+                        .info
+                        .expect("malformed state tree, version 1 and version 2 require info"),
+                },
+                Blake2b256,
+            )?)
+        }
+    }
+
+    pub fn for_each<F>(&self, mut f: F) -> Result<(), Box<dyn StdError>>
+    where
+        F: FnMut(Address, &ActorState) -> Result<(), Box<dyn StdError>>,
+        S: BlockStore,
+    {
+        self.hamt.for_each(|k, v| f(Address::from_bytes(&k.0)?, v))
     }
 }

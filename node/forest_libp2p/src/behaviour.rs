@@ -1,69 +1,102 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use crate::blocksync::{
-    BlockSyncCodec, BlockSyncProtocolName, BlockSyncRequest, BlockSyncResponse,
+use crate::{
+    chain_exchange::{
+        ChainExchangeCodec, ChainExchangeProtocolName, ChainExchangeRequest, ChainExchangeResponse,
+    },
+    discovery::DiscoveryOut,
+    rpc::RequestResponseError,
 };
-use crate::config::Libp2pConfig;
-use crate::hello::{HelloCodec, HelloProtocolName, HelloRequest, HelloResponse};
-use crate::rpc::RPCRequest;
+use crate::{config::Libp2pConfig, discovery::DiscoveryBehaviour};
+use crate::{
+    discovery::DiscoveryConfig,
+    hello::{HelloCodec, HelloProtocolName, HelloRequest, HelloResponse},
+};
 use forest_cid::Cid;
-use libp2p::core::identity::Keypair;
+use futures::channel::oneshot::{self, Sender as OneShotSender};
+use futures::{prelude::*, stream::FuturesUnordered};
+use git_version::git_version;
 use libp2p::core::PeerId;
 use libp2p::gossipsub::{
-    error::PublishError, Gossipsub, GossipsubConfig, GossipsubEvent, MessageAuthenticity, Topic,
-    TopicHash, ValidationMode,
+    error::PublishError, error::SubscriptionError, Gossipsub, GossipsubConfigBuilder,
+    GossipsubEvent, IdentTopic as Topic, MessageAuthenticity, MessageId, TopicHash, ValidationMode,
 };
 use libp2p::identify::{Identify, IdentifyEvent};
-use libp2p::kad::record::store::MemoryStore;
-use libp2p::kad::{Kademlia, KademliaConfig, KademliaEvent, QueryId};
-use libp2p::mdns::{Mdns, MdnsEvent};
-use libp2p::multiaddr::Protocol;
 use libp2p::ping::{
     handler::{PingFailure, PingSuccess},
     Ping, PingEvent,
 };
-use libp2p::swarm::{
-    toggle::Toggle, NetworkBehaviourAction, NetworkBehaviourEventProcess, PollParameters,
-};
-use libp2p::NetworkBehaviour;
-use libp2p_bitswap::{Bitswap, BitswapEvent, Priority};
-use libp2p_request_response::{
+use libp2p::request_response::{
     ProtocolSupport, RequestId, RequestResponse, RequestResponseConfig, RequestResponseEvent,
     RequestResponseMessage, ResponseChannel,
 };
+use libp2p::swarm::{NetworkBehaviourAction, NetworkBehaviourEventProcess, PollParameters};
+use libp2p::NetworkBehaviour;
+use libp2p::{core::identity::Keypair, kad::QueryId};
+use libp2p_bitswap::{Bitswap, BitswapEvent, Priority};
 use log::{debug, trace, warn};
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::error::Error;
+use std::pin::Pin;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{collections::HashMap, convert::TryInto};
 use std::{task::Context, task::Poll};
 use tiny_cid::Cid as Cid2;
 
+lazy_static! {
+    static ref VERSION: &'static str = env!("CARGO_PKG_VERSION");
+    static ref CURRENT_COMMIT: &'static str = git_version!();
+}
+
+/// Libp2p behaviour for the Forest node. This handles all sub protocols needed for a Filecoin node.
 #[derive(NetworkBehaviour)]
 #[behaviour(out_event = "ForestBehaviourEvent", poll_method = "poll")]
-pub struct ForestBehaviour {
+pub(crate) struct ForestBehaviour {
     gossipsub: Gossipsub,
-    mdns: Toggle<Mdns>,
+    discovery: DiscoveryBehaviour,
     ping: Ping,
     identify: Identify,
+    // TODO would be nice to have this handled together and generic, to avoid duplicated polling
+    // but is fine for now, since the protocols are handled slightly differently.
     hello: RequestResponse<HelloCodec>,
-    blocksync: RequestResponse<BlockSyncCodec>,
-    kademlia: Toggle<Kademlia<MemoryStore>>,
+    chain_exchange: RequestResponse<ChainExchangeCodec>,
     bitswap: Bitswap,
     #[behaviour(ignore)]
     events: Vec<ForestBehaviourEvent>,
+    /// Keeps track of Chain exchange requests to responses
     #[behaviour(ignore)]
-    peers: HashSet<PeerId>,
+    cx_request_table:
+        HashMap<RequestId, OneShotSender<Result<ChainExchangeResponse, RequestResponseError>>>,
+    /// Keeps track of hello requests indexed by request ID to route response.
+    #[behaviour(ignore)]
+    hello_request_table:
+        HashMap<RequestId, OneShotSender<Result<HelloResponse, RequestResponseError>>>,
+    /// Boxed futures of responses for Chain Exchange incoming requests. This needs to be polled
+    /// in the behaviour to have access to the `RequestResponse` protocol when sending response.
+    ///
+    /// This technically shouldn't be necessary, because the response can just be sent through the
+    /// internal channel, but is necessary to avoid forking `RequestResponse`.
+    #[behaviour(ignore)]
+    cx_pending_responses:
+        FuturesUnordered<Pin<Box<dyn Future<Output = Option<RequestProcessingOutcome>> + Send>>>,
 }
 
+struct RequestProcessingOutcome {
+    inner_channel: ResponseChannel<ChainExchangeResponse>,
+    response: ChainExchangeResponse,
+}
+
+/// Event type which is emitted from the [ForestBehaviour] into the libp2p service.
 #[derive(Debug)]
-pub enum ForestBehaviourEvent {
-    PeerDialed(PeerId),
+pub(crate) enum ForestBehaviourEvent {
+    PeerConnected(PeerId),
     PeerDisconnected(PeerId),
     GossipMessage {
-        source: Option<PeerId>,
-        topics: Vec<TopicHash>,
+        source: PeerId,
+        topic: TopicHash,
         message: Vec<u8>,
     },
     BitswapReceivedBlock(PeerId, Cid, Box<[u8]>),
@@ -71,55 +104,24 @@ pub enum ForestBehaviourEvent {
     HelloRequest {
         peer: PeerId,
         request: HelloRequest,
-        channel: ResponseChannel<HelloResponse>,
     },
-    HelloResponse {
+    ChainExchangeRequest {
         peer: PeerId,
-        request_id: RequestId,
-        response: HelloResponse,
-    },
-    BlockSyncRequest {
-        peer: PeerId,
-        request: BlockSyncRequest,
-        channel: ResponseChannel<BlockSyncResponse>,
-    },
-    BlockSyncResponse {
-        peer: PeerId,
-        request_id: RequestId,
-        response: BlockSyncResponse,
+        request: ChainExchangeRequest,
+        channel: OneShotSender<ChainExchangeResponse>,
     },
 }
 
-impl NetworkBehaviourEventProcess<MdnsEvent> for ForestBehaviour {
-    fn inject_event(&mut self, event: MdnsEvent) {
+impl NetworkBehaviourEventProcess<DiscoveryOut> for ForestBehaviour {
+    fn inject_event(&mut self, event: DiscoveryOut) {
         match event {
-            MdnsEvent::Discovered(list) => {
-                for (peer, _) in list {
-                    trace!("mdns: Discovered peer {}", peer.to_base58());
-                    self.add_peer(peer);
-                }
+            DiscoveryOut::Connected(peer) => {
+                self.bitswap.connect(peer);
+                self.events.push(ForestBehaviourEvent::PeerConnected(peer));
             }
-            MdnsEvent::Expired(list) => {
-                if self.mdns.is_enabled() {
-                    for (peer, _) in list {
-                        if !self.mdns.as_ref().unwrap().has_node(&peer) {
-                            self.remove_peer(&peer);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl NetworkBehaviourEventProcess<KademliaEvent> for ForestBehaviour {
-    fn inject_event(&mut self, event: KademliaEvent) {
-        match event {
-            KademliaEvent::RoutingUpdated { peer, .. } => {
-                self.add_peer(peer);
-            }
-            event => {
-                trace!("kad: {:?}", event);
+            DiscoveryOut::Disconnected(peer) => {
+                self.events
+                    .push(ForestBehaviourEvent::PeerDisconnected(peer));
             }
         }
     }
@@ -129,21 +131,27 @@ impl NetworkBehaviourEventProcess<BitswapEvent> for ForestBehaviour {
     fn inject_event(&mut self, event: BitswapEvent) {
         match event {
             BitswapEvent::ReceivedBlock(peer_id, cid, data) => {
+                // The `cid` from this event has a different type
                 let cid = cid.to_bytes();
-                match Cid::from_raw_cid(cid.as_slice()) {
+                match Cid::try_from(cid) {
                     Ok(cid) => self.events.push(ForestBehaviourEvent::BitswapReceivedBlock(
                         peer_id, cid, data,
                     )),
-                    Err(e) => warn!("Fail to convert Cid: {}", e.to_string()),
+                    Err(e) => {
+                        warn!("Fail to convert Cid: {}", e.to_string());
+                    }
                 }
             }
             BitswapEvent::ReceivedWant(peer_id, cid, _priority) => {
+                // The `cid` from this event has a different type
                 let cid = cid.to_bytes();
-                match Cid::from_raw_cid(cid.as_slice()) {
+                match Cid::try_from(cid) {
                     Ok(cid) => self
                         .events
                         .push(ForestBehaviourEvent::BitswapReceivedWant(peer_id, cid)),
-                    Err(e) => warn!("Fail to convert Cid: {}", e.to_string()),
+                    Err(e) => {
+                        warn!("Fail to convert Cid: {}", e.to_string());
+                    }
                 }
             }
             BitswapEvent::ReceivedCancel(_peer_id, _cid) => {
@@ -156,10 +164,15 @@ impl NetworkBehaviourEventProcess<BitswapEvent> for ForestBehaviour {
 
 impl NetworkBehaviourEventProcess<GossipsubEvent> for ForestBehaviour {
     fn inject_event(&mut self, message: GossipsubEvent) {
-        if let GossipsubEvent::Message(_, _, message) = message {
+        if let GossipsubEvent::Message {
+            propagation_source,
+            message,
+            message_id: _,
+        } = message
+        {
             self.events.push(ForestBehaviourEvent::GossipMessage {
-                source: message.source,
-                topics: message.topics,
+                source: propagation_source,
+                topic: message.topic,
                 message: message.data,
             })
         }
@@ -216,70 +229,159 @@ impl NetworkBehaviourEventProcess<RequestResponseEvent<HelloRequest, HelloRespon
     fn inject_event(&mut self, event: RequestResponseEvent<HelloRequest, HelloResponse>) {
         match event {
             RequestResponseEvent::Message { peer, message } => match message {
-                RequestResponseMessage::Request { request, channel } => {
-                    self.events.push(ForestBehaviourEvent::HelloRequest {
-                        peer,
-                        request,
-                        channel,
-                    })
+                RequestResponseMessage::Request {
+                    request,
+                    channel,
+                    request_id: _,
+                } => {
+                    let arrival = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("System time before unix epoch")
+                        .as_nanos()
+                        .try_into()
+                        .expect("System time since unix epoch should not exceed u64");
+
+                    debug!("Received hello request: {:?}", request);
+                    let sent = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("System time before unix epoch")
+                        .as_nanos()
+                        .try_into()
+                        .expect("System time since unix epoch should not exceed u64");
+
+                    // Send hello response immediately, no need to have the overhead of emitting
+                    // channel and polling future here.
+                    if let Err(e) = self
+                        .hello
+                        .send_response(channel, HelloResponse { arrival, sent })
+                    {
+                        debug!("Failed to send HelloResponse: {:?}", e)
+                    };
+                    self.events
+                        .push(ForestBehaviourEvent::HelloRequest { request, peer });
                 }
                 RequestResponseMessage::Response {
                     request_id,
                     response,
-                } => self.events.push(ForestBehaviourEvent::HelloResponse {
-                    peer,
-                    request_id,
-                    response,
-                }),
+                } => {
+                    // Send the sucessful response through channel out.
+                    let tx = self.hello_request_table.remove(&request_id);
+                    if let Some(tx) = tx {
+                        if tx.send(Ok(response)).is_err() {
+                            debug!("RPCResponse receive timed out");
+                        }
+                    } else {
+                        debug!("RPCResponse receive failed: channel not found");
+                    };
+                }
             },
             RequestResponseEvent::OutboundFailure {
                 peer,
                 request_id,
                 error,
-            } => warn!(
-                "Hello outbound failure (peer: {:?}) (id: {:?}): {:?}",
-                peer, request_id, error
-            ),
-            RequestResponseEvent::InboundFailure { peer, error } => {
-                warn!("Hello inbound error (peer: {:?}): {:?}", peer, error)
+            } => {
+                warn!(
+                    "Hello outbound error (peer: {:?}) (id: {:?}): {:?}",
+                    peer, request_id, error
+                );
+
+                // Send error through channel out.
+                let tx = self.hello_request_table.remove(&request_id);
+                if let Some(tx) = tx {
+                    if tx.send(Err(error.into())).is_err() {
+                        debug!("RPCResponse receive failed");
+                    }
+                }
             }
+            RequestResponseEvent::InboundFailure {
+                peer,
+                error,
+                request_id: _,
+            } => {
+                warn!("Hello inbound error (peer: {:?}): {:?}", peer, error);
+            }
+            RequestResponseEvent::ResponseSent { .. } => (),
         }
     }
 }
 
-impl NetworkBehaviourEventProcess<RequestResponseEvent<BlockSyncRequest, BlockSyncResponse>>
+impl NetworkBehaviourEventProcess<RequestResponseEvent<ChainExchangeRequest, ChainExchangeResponse>>
     for ForestBehaviour
 {
-    fn inject_event(&mut self, event: RequestResponseEvent<BlockSyncRequest, BlockSyncResponse>) {
+    fn inject_event(
+        &mut self,
+        event: RequestResponseEvent<ChainExchangeRequest, ChainExchangeResponse>,
+    ) {
         match event {
             RequestResponseEvent::Message { peer, message } => match message {
-                RequestResponseMessage::Request { request, channel } => {
-                    self.events.push(ForestBehaviourEvent::BlockSyncRequest {
-                        peer,
-                        request,
-                        channel,
-                    })
+                RequestResponseMessage::Request {
+                    request,
+                    channel,
+                    request_id: _,
+                } => {
+                    let (tx, rx) = oneshot::channel();
+                    self.cx_pending_responses.push(Box::pin(async move {
+                        rx.await
+                            .map(|response| RequestProcessingOutcome {
+                                inner_channel: channel,
+                                response,
+                            })
+                            .ok()
+                    }));
+
+                    self.events
+                        .push(ForestBehaviourEvent::ChainExchangeRequest {
+                            peer,
+                            request,
+                            channel: tx,
+                        })
                 }
                 RequestResponseMessage::Response {
                     request_id,
                     response,
-                } => self.events.push(ForestBehaviourEvent::BlockSyncResponse {
-                    peer,
-                    request_id,
-                    response,
-                }),
+                } => {
+                    let tx = self.cx_request_table.remove(&request_id);
+
+                    // Send the sucessful response through channel out.
+                    if let Some(tx) = tx {
+                        if tx.send(Ok(response)).is_err() {
+                            debug!("RPCResponse receive timed out")
+                        }
+                    } else {
+                        debug!("RPCResponse receive failed: channel not found");
+                    };
+                }
             },
             RequestResponseEvent::OutboundFailure {
                 peer,
                 request_id,
                 error,
-            } => warn!(
-                "BlockSync outbound error (peer: {:?}) (id: {:?}): {:?}",
-                peer, request_id, error
-            ),
-            RequestResponseEvent::InboundFailure { peer, error } => {
-                warn!("BlockSync inbound error (peer: {:?}): {:?}", peer, error)
+            } => {
+                warn!(
+                    "ChainExchange outbound error (peer: {:?}) (id: {:?}): {:?}",
+                    peer, request_id, error
+                );
+
+                let tx = self.cx_request_table.remove(&request_id);
+
+                // Send error through channel out.
+                if let Some(tx) = tx {
+                    if tx.send(Err(error.into())).is_err() {
+                        debug!("RPCResponse receive failed")
+                    }
+                }
             }
+            RequestResponseEvent::InboundFailure {
+                peer,
+                error,
+                request_id: _,
+            } => {
+                warn!(
+                    "ChainExchange inbound error (peer: {:?}): {:?}",
+                    peer, error
+                );
+            }
+            _ => {}
         }
     }
 }
@@ -288,9 +390,30 @@ impl ForestBehaviour {
     /// Consumes the events list when polled.
     fn poll<TBehaviourIn>(
         &mut self,
-        _: &mut Context,
+        cx: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<NetworkBehaviourAction<TBehaviourIn, ForestBehaviourEvent>> {
+        // Poll to see if any response is ready to be sent back.
+        while let Poll::Ready(Some(outcome)) = self.cx_pending_responses.poll_next_unpin(cx) {
+            let RequestProcessingOutcome {
+                inner_channel,
+                response,
+            } = match outcome {
+                Some(outcome) => outcome,
+                // The response builder was too busy and thus the request was dropped. This is
+                // later on reported as a `InboundFailure::Omission`.
+                None => continue,
+            };
+
+            if self
+                .chain_exchange
+                .send_response(inner_channel, response)
+                .is_err()
+            {
+                // TODO can include request id from RequestProcessingOutcome
+                warn!("failed to send chain exchange response");
+            }
+        }
         if !self.events.is_empty() {
             return Poll::Ready(NetworkBehaviourAction::GenerateEvent(self.events.remove(0)));
         }
@@ -298,115 +421,96 @@ impl ForestBehaviour {
     }
 
     pub fn new(local_key: &Keypair, config: &Libp2pConfig, network_name: &str) -> Self {
-        let local_peer_id = local_key.public().into_peer_id();
-        let gossipsub_config = GossipsubConfig {
-            // TODO revisit validation (permissive validation allows unsigned messages)
-            validation_mode: ValidationMode::Permissive,
-            // Using go gossipsub default, not certain this is intended
-            max_transmit_size: 1 << 20,
-            ..Default::default()
-        };
+        let mut gs_config_builder = GossipsubConfigBuilder::default();
+        gs_config_builder.max_transmit_size(1 << 20);
+        gs_config_builder.validation_mode(ValidationMode::Strict);
 
-        let mut bitswap = Bitswap::new();
+        let gossipsub_config = gs_config_builder.build().unwrap();
 
-        // Kademlia config
-        let store = MemoryStore::new(local_peer_id.to_owned());
-        let mut kad_config = KademliaConfig::default();
-        let network = format!("/fil/kad/{}/kad/1.0.0", network_name);
-        kad_config.set_protocol_name(network.as_bytes().to_vec());
-        let kademlia_opt = if config.kademlia {
-            let mut kademlia = Kademlia::with_config(local_peer_id.to_owned(), store, kad_config);
-            for multiaddr in config.bootstrap_peers.iter() {
-                let mut addr = multiaddr.to_owned();
-                if let Some(Protocol::P2p(mh)) = addr.pop() {
-                    let peer_id = PeerId::from_multihash(mh).unwrap();
-                    kademlia.add_address(&peer_id, addr);
-                    bitswap.connect(peer_id);
-                } else {
-                    warn!("Could not add addr {} to Kademlia DHT", multiaddr)
-                }
-            }
-            if let Err(e) = kademlia.bootstrap() {
-                warn!("Kademlia bootstrap failed: {}", e);
-            }
-            Some(kademlia)
-        } else {
-            None
-        };
+        let bitswap = Bitswap::new();
 
-        let mdns_opt = if config.mdns {
-            Some(Mdns::new().expect("Could not start mDNS"))
-        } else {
-            None
-        };
+        let mut discovery_config = DiscoveryConfig::new(local_key.public(), network_name);
+        discovery_config
+            .with_mdns(config.mdns)
+            .with_kademlia(config.kademlia)
+            .with_user_defined(config.bootstrap_peers.clone())
+            // TODO allow configuring this through config.
+            .discovery_limit(50);
 
         let hp = std::iter::once((HelloProtocolName, ProtocolSupport::Full));
-        let bp = std::iter::once((BlockSyncProtocolName, ProtocolSupport::Full));
+        let cp = std::iter::once((ChainExchangeProtocolName, ProtocolSupport::Full));
 
         let mut req_res_config = RequestResponseConfig::default();
         req_res_config.set_request_timeout(Duration::from_secs(20));
         req_res_config.set_connection_keep_alive(Duration::from_secs(20));
 
         ForestBehaviour {
-            gossipsub: Gossipsub::new(MessageAuthenticity::Author(local_peer_id), gossipsub_config),
-            mdns: mdns_opt.into(),
+            gossipsub: Gossipsub::new(
+                MessageAuthenticity::Signed(local_key.clone()),
+                gossipsub_config,
+            )
+            .unwrap(),
+            discovery: discovery_config.finish(),
             ping: Ping::default(),
             identify: Identify::new(
                 "ipfs/0.1.0".into(),
-                // TODO update to include actual version
-                format!("forest-{}", "0.1.0"),
+                format!("forest-{}-{}", *VERSION, *CURRENT_COMMIT),
                 local_key.public(),
             ),
-            kademlia: kademlia_opt.into(),
             bitswap,
-            hello: RequestResponse::new(HelloCodec, hp, req_res_config.clone()),
-            blocksync: RequestResponse::new(BlockSyncCodec, bp, req_res_config),
+            hello: RequestResponse::new(HelloCodec::default(), hp, req_res_config.clone()),
+            chain_exchange: RequestResponse::new(ChainExchangeCodec::default(), cp, req_res_config),
+            cx_pending_responses: Default::default(),
+            cx_request_table: Default::default(),
+            hello_request_table: Default::default(),
             events: vec![],
-            peers: Default::default(),
         }
     }
 
     /// Bootstrap Kademlia network
     pub fn bootstrap(&mut self) -> Result<QueryId, String> {
-        if let Some(active_kad) = self.kademlia.as_mut() {
-            active_kad.bootstrap().map_err(|e| e.to_string())
-        } else {
-            Err("Kademlia is not activated".to_string())
-        }
+        self.discovery.bootstrap()
     }
 
     /// Publish data over the gossip network.
-    pub fn publish(&mut self, topic: &Topic, data: impl Into<Vec<u8>>) -> Result<(), PublishError> {
+    pub fn publish(
+        &mut self,
+        topic: Topic,
+        data: impl Into<Vec<u8>>,
+    ) -> Result<MessageId, PublishError> {
         self.gossipsub.publish(topic, data)
     }
 
     /// Subscribe to a gossip topic.
-    pub fn subscribe(&mut self, topic: Topic) -> bool {
+    pub fn subscribe(&mut self, topic: &Topic) -> Result<bool, SubscriptionError> {
         self.gossipsub.subscribe(topic)
     }
 
-    /// Send an RPC request or response to some peer.
-    pub fn send_rpc_request(&mut self, peer_id: &PeerId, req: RPCRequest) -> RequestId {
-        match req {
-            RPCRequest::Hello(request) => self.hello.send_request(peer_id, request),
-            RPCRequest::BlockSync(request) => self.blocksync.send_request(peer_id, request),
-        }
+    /// Send a hello request or response to some peer.
+    pub fn send_hello_request(
+        &mut self,
+        peer_id: &PeerId,
+        request: HelloRequest,
+        response_channel: OneShotSender<Result<HelloResponse, RequestResponseError>>,
+    ) {
+        let req_id = self.hello.send_request(peer_id, request);
+        self.hello_request_table.insert(req_id, response_channel);
+    }
+
+    /// Send a chain exchange request or response to some peer.
+    pub fn send_chain_exchange_request(
+        &mut self,
+        peer_id: &PeerId,
+        request: ChainExchangeRequest,
+        response_channel: OneShotSender<Result<ChainExchangeResponse, RequestResponseError>>,
+    ) {
+        let req_id = self.chain_exchange.send_request(peer_id, request);
+        self.cx_request_table.insert(req_id, response_channel);
     }
 
     /// Adds peer to the peer set.
-    pub fn add_peer(&mut self, peer_id: PeerId) {
-        self.peers.insert(peer_id.clone());
-        self.bitswap.connect(peer_id);
-    }
-
-    /// Adds peer to the peer set.
-    pub fn remove_peer(&mut self, peer_id: &PeerId) {
-        self.peers.remove(peer_id);
-    }
-
-    /// Adds peer to the peer set.
-    pub fn peers(&self) -> &HashSet<PeerId> {
-        &self.peers
+    pub fn peers(&mut self) -> &HashSet<PeerId> {
+        self.discovery.peers()
     }
 
     /// Send a block to a peer over bitswap
@@ -429,15 +533,6 @@ impl ForestBehaviour {
         let cid = cid.to_bytes();
         let cid = Cid2::try_from(cid)?;
         self.bitswap.want_block(cid, priority);
-        Ok(())
-    }
-
-    /// Cancel a bitswap request
-    pub fn cancel_block(&mut self, cid: &Cid) -> Result<(), Box<dyn Error>> {
-        debug!("cancel {}", cid.to_string());
-        let cid = cid.to_bytes();
-        let cid = Cid2::try_from(cid)?;
-        self.bitswap.cancel_block(&cid);
         Ok(())
     }
 }

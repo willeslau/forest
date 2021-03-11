@@ -3,28 +3,28 @@
 
 use super::*;
 use crate::peer_manager::PeerManager;
-use actor::EPOCH_DURATION_SECONDS;
-use async_std::sync::channel;
+use async_std::channel::bounded;
 use async_std::task;
-use beacon::{DrandBeacon, DrandPublic};
-use chain::tipset_from_keys;
 use db::MemoryDB;
 use fil_types::verifier::FullVerifier;
 use forest_car::load_car;
-use forest_libp2p::{blocksync::make_blocksync_response, NetworkMessage};
+use forest_libp2p::{chain_exchange::make_chain_exchange_response, NetworkMessage};
 use genesis::{initialize_genesis, EXPORT_SR_40};
 use libp2p::core::PeerId;
 use state_manager::StateManager;
 
-async fn handle_requests<DB: BlockStore>(mut chan: Receiver<NetworkMessage>, db: DB) {
+async fn handle_requests<DB>(mut chan: Receiver<NetworkMessage>, db: ChainStore<DB>)
+where
+    DB: BlockStore + Send + Sync + 'static,
+{
     loop {
         match chan.next().await {
-            Some(NetworkMessage::BlockSyncRequest {
+            Some(NetworkMessage::ChainExchangeRequest {
                 request,
                 response_channel,
                 ..
             }) => response_channel
-                .send(make_blocksync_response(&db, &request))
+                .send(Ok(make_chain_exchange_response(&db, &request).await))
                 .unwrap(),
             Some(event) => log::warn!("Other request sent to network: {:?}", event),
             None => break,
@@ -40,48 +40,52 @@ async fn space_race_full_sync() {
 
     let db = Arc::new(MemoryDB::default());
 
-    let mut chain_store = ChainStore::new(db.clone());
-    let state_manager = Arc::new(StateManager::new(db));
+    let chain_store = Arc::new(ChainStore::new(db.clone()));
+    let state_manager = Arc::new(StateManager::new(chain_store));
 
-    let (network_send, network_recv) = channel(20);
+    let (network_send, network_recv) = bounded(20);
 
     // Initialize genesis using default (currently space-race) genesis
-    let (genesis, _) = initialize_genesis(None, &mut chain_store, &state_manager).unwrap();
-    let chain_store = Arc::new(chain_store);
+    let (genesis, _) = initialize_genesis(None, &state_manager).await.unwrap();
     let genesis = Arc::new(genesis);
 
-    let beacon = Arc::new(DrandBeacon::new(
-        "https://pl-us.incentinet.drand.sh",
-        DrandPublic{coefficient: hex::decode("8cad0c72c606ab27d36ee06de1d5b2db1faf92e447025ca37575ab3a8aac2eaae83192f846fc9e158bc738423753d000").unwrap()},
-        genesis.blocks()[0].timestamp(),
-        EPOCH_DURATION_SECONDS as u64,
-    )
-    .await
-    .unwrap());
+    let beacon = Arc::new(
+        networks::beacon_schedule_default(genesis.min_timestamp())
+            .await
+            .unwrap(),
+    );
 
     let peer = PeerId::random();
     let peer_manager = PeerManager::default();
-    peer_manager.update_peer_head(peer, None).await;
-    let network = SyncNetworkContext::new(network_send, Arc::new(peer_manager));
+    // Just need to add a peer to be valid to send request
+    peer_manager
+        .update_peer_head(peer, Arc::clone(&genesis))
+        .await;
+    let network = SyncNetworkContext::new(network_send, Arc::new(peer_manager), db);
 
-    let provider_db = MemoryDB::default();
-    let cids: Vec<Cid> = load_car(&provider_db, EXPORT_SR_40.as_ref()).unwrap();
-    let ts = tipset_from_keys(&provider_db, &TipsetKeys::new(cids)).unwrap();
-    let target = Arc::new(ts);
+    let provider_db = Arc::new(MemoryDB::default());
+    let cids: Vec<Cid> = load_car(provider_db.as_ref(), EXPORT_SR_40.as_ref())
+        .await
+        .unwrap();
+    let prov_cs = ChainStore::new(provider_db);
+    let target = prov_cs
+        .tipset_from_keys(&TipsetKeys::new(cids))
+        .await
+        .unwrap();
 
     let worker = SyncWorker {
         state: Default::default(),
         beacon,
         state_manager,
-        chain_store,
         network,
         genesis,
         bad_blocks: Default::default(),
         verifier: PhantomData::<FullVerifier>::default(),
+        req_window: 200,
     };
 
     // Setup process to handle requests from syncer
-    task::spawn(async { handle_requests(network_recv, provider_db).await });
+    task::spawn(async { handle_requests(network_recv, prov_cs).await });
 
     worker.sync(target).await.unwrap();
 }

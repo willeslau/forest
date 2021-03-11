@@ -1,14 +1,14 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use actor::{init, ACCOUNT_ACTOR_CODE_ID, INIT_ACTOR_ADDR};
+use actor::actorv0::{account, init, ACCOUNT_ACTOR_CODE_ID, INIT_ACTOR_ADDR, INIT_ACTOR_CODE_ID};
 use address::Address;
-use blocks::TipsetKeys;
-use cid::multihash::{Blake2b256, Identity};
+use cid::Code::{Blake2b256, Identity};
 use clock::ChainEpoch;
+use crypto::DomainSeparationTag;
 use db::MemoryDB;
-use fil_types::{verifier::MockVerifier, NetworkVersion};
-use interpreter::{vm_send, ChainRand, CircSupplyCalc, DefaultRuntime};
+use fil_types::{verifier::MockVerifier, NetworkVersion, StateTreeVersion};
+use interpreter::{CircSupplyCalc, DefaultRuntime, LookbackStateGetter, Rand};
 use ipld_blockstore::BlockStore;
 use ipld_hamt::Hamt;
 use message::UnsignedMessage;
@@ -28,11 +28,38 @@ impl CircSupplyCalc for MockCircSupply {
     }
 }
 
+struct MockStateLB<'db, MemoryDB>(&'db MemoryDB);
+impl<'db> LookbackStateGetter<'db, MemoryDB> for MockStateLB<'db, MemoryDB> {
+    fn state_lookback(&self, _: ChainEpoch) -> Result<StateTree<'db, MemoryDB>, Box<dyn StdError>> {
+        Err("Test shouldn't call lookback".into())
+    }
+}
+
+struct MockRand;
+impl Rand for MockRand {
+    fn get_chain_randomness(
+        &self,
+        _: DomainSeparationTag,
+        _: ChainEpoch,
+        _: &[u8],
+    ) -> Result<[u8; 32], Box<dyn StdError>> {
+        Ok(*b"i_am_random_____i_am_random_____")
+    }
+    fn get_beacon_randomness(
+        &self,
+        _: DomainSeparationTag,
+        _: ChainEpoch,
+        _: &[u8],
+    ) -> Result<[u8; 32], Box<dyn StdError>> {
+        Ok(*b"i_am_random_____i_am_random_____")
+    }
+}
+
 #[test]
 fn transfer_test() {
     let store = MemoryDB::default();
 
-    let mut state = StateTree::new(&store);
+    let mut state = StateTree::new(&store, StateTreeVersion::V0).unwrap();
 
     let e_cid = Hamt::<_, String>::new_with_bit_width(&store, 5)
         .flush()
@@ -47,7 +74,7 @@ fn transfer_test() {
         .unwrap();
 
     let act_s = ActorState::new(
-        ACCOUNT_ACTOR_CODE_ID.clone(),
+        INIT_ACTOR_CODE_ID.clone(),
         state_cid.clone(),
         Default::default(),
         1,
@@ -60,7 +87,7 @@ fn transfer_test() {
     let actor_state_cid_1 = state
         .store()
         .put(
-            &actor::account::State {
+            &account::State {
                 address: actor_addr_1.clone(),
             },
             Identity,
@@ -71,7 +98,7 @@ fn transfer_test() {
     let actor_state_cid_2 = state
         .store()
         .put(
-            &actor::account::State {
+            &account::State {
                 address: actor_addr_2.clone(),
             },
             Identity,
@@ -106,10 +133,10 @@ fn transfer_test() {
         .build()
         .unwrap();
 
-    let dummy_rand = ChainRand::new(TipsetKeys::new(vec![]));
     let registered = HashSet::new();
 
-    let mut runtime = DefaultRuntime::<_, _, _, MockVerifier>::new(
+    let lookback = MockStateLB(&store);
+    let mut runtime = DefaultRuntime::<_, _, _, _, MockVerifier>::new(
         NetworkVersion::V0,
         &mut state,
         &store,
@@ -119,12 +146,14 @@ fn transfer_test() {
         actor_addr_2.clone(),
         0,
         0,
-        &dummy_rand,
+        0,
+        &MockRand,
         &registered,
         &MockCircSupply,
+        &lookback,
     )
     .unwrap();
-    let _serialized = vm_send(&mut runtime, &message, None).unwrap();
+    let _serialized = runtime.send(&message, None).unwrap();
 
     let actor_state_result_1 = state.get_actor(&actor_addr_1).unwrap().unwrap();
     let actor_state_result_2 = state.get_actor(&actor_addr_2).unwrap().unwrap();

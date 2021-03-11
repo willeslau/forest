@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use address::Address;
-use cid::{multihash::Blake2b256, Cid};
+use cid::{Cid, Code::Blake2b256};
 use clock::ChainEpoch;
 use crypto::{DomainSeparationTag, Signature};
 use db::MemoryDB;
@@ -28,8 +28,6 @@ pub struct MockRuntime {
     pub caller: Address,
     pub caller_type: Cid,
     pub value_received: TokenAmount,
-
-    // TODO: syscalls: syscaller
 
     // Actor State
     pub state: Option<Cid>,
@@ -156,7 +154,7 @@ impl MockRuntime {
     }
     fn check_argument(&self, predicate: bool, msg: String) -> Result<(), ActorError> {
         if !predicate {
-            return Err(actor_error!(SysErrorIllegalArgument; msg));
+            return Err(actor_error!(SysErrIllegalArgument; msg));
         }
         Ok(())
     }
@@ -237,7 +235,7 @@ impl MockRuntime {
     ) -> Result<Serialized, ActorError> {
         self.in_call = true;
         let prev_state = self.state.clone();
-        let res = actor::invoke_code(to_code, self, method_num, params)
+        let res = forest_actor::invoke_code(to_code, self, method_num, params)
             .unwrap_or_else(|| Err(actor_error!(SysErrForbidden, "invalid method id")));
 
         if res.is_err() {
@@ -507,7 +505,7 @@ impl Runtime<MemoryDB> for MockRuntime {
 
     fn create<C: Cbor>(&mut self, obj: &C) -> Result<(), ActorError> {
         if self.state.is_some() == true {
-            return Err(actor_error!(SysErrorIllegalActor; "state already constructed"));
+            return Err(actor_error!(SysErrIllegalActor; "state already constructed"));
         }
         self.state = Some(self.store.put(obj, Blake2b256).unwrap());
         Ok(())
@@ -527,7 +525,7 @@ impl Runtime<MemoryDB> for MockRuntime {
         F: FnOnce(&mut C, &mut Self) -> Result<RT, ActorError>,
     {
         if self.in_transaction {
-            return Err(actor_error!(SysErrorIllegalActor; "nested transaction"));
+            return Err(actor_error!(SysErrIllegalActor; "nested transaction"));
         }
         let mut read_only = self.state()?;
         self.in_transaction = true;
@@ -550,7 +548,7 @@ impl Runtime<MemoryDB> for MockRuntime {
     ) -> Result<Serialized, ActorError> {
         self.require_in_call();
         if self.in_transaction {
-            return Err(actor_error!(SysErrorIllegalActor; "side-effect within transaction"));
+            return Err(actor_error!(SysErrIllegalActor; "side-effect within transaction"));
         }
 
         assert!(
@@ -596,7 +594,7 @@ impl Runtime<MemoryDB> for MockRuntime {
     fn create_actor(&mut self, code_id: Cid, address: &Address) -> Result<(), ActorError> {
         self.require_in_call();
         if self.in_transaction {
-            return Err(actor_error!(SysErrorIllegalActor; "side-effect within transaction"));
+            return Err(actor_error!(SysErrIllegalActor; "side-effect within transaction"));
         }
         let expect_create_actor = self
             .expect_create_actor
@@ -610,7 +608,7 @@ impl Runtime<MemoryDB> for MockRuntime {
     fn delete_actor(&mut self, addr: &Address) -> Result<(), ActorError> {
         self.require_in_call();
         if self.in_transaction {
-            return Err(actor_error!(SysErrorIllegalActor; "side-effect within transaction"));
+            return Err(actor_error!(SysErrIllegalActor; "side-effect within transaction"));
         }
         let exp_act = self.expect_delete_actor.take();
         if exp_act.is_none() {
@@ -628,10 +626,6 @@ impl Runtime<MemoryDB> for MockRuntime {
 
     fn total_fil_circ_supply(&self) -> Result<TokenAmount, ActorError> {
         unimplemented!();
-    }
-
-    fn syscalls(&self) -> &dyn Syscalls {
-        self
     }
 
     fn charge_gas(&mut self, _: &'static str, _: i64) -> Result<(), ActorError> {

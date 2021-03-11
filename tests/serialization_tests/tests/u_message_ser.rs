@@ -4,7 +4,7 @@
 // Doesn't run these unless feature specified
 #![cfg(feature = "submodule_tests")]
 
-use encoding::{from_slice, to_vec};
+use encoding::to_vec;
 use forest_message::{unsigned_message, UnsignedMessage};
 use hex::encode;
 use serde::Deserialize;
@@ -23,11 +23,6 @@ fn encode_assert_cbor(message: &UnsignedMessage, expected: &str) {
 
     // Assert the message is encoded in same format
     assert_eq!(encode(enc_bz.as_slice()), expected);
-    // Assert decoding from those bytes goes back to unsigned message
-    assert_eq!(
-        &from_slice::<UnsignedMessage>(&enc_bz).expect("Should be able to deserialize cbor bytes"),
-        message
-    );
 }
 
 #[test]

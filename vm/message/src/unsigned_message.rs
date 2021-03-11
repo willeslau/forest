@@ -75,11 +75,18 @@ impl UnsignedMessage {
 
     /// Semantic validation and validates the message has enough gas.
     #[cfg(feature = "proofs")]
-    pub fn valid_for_block_inclusion(&self, min_gas: i64) -> Result<(), String> {
-        use fil_types::{BLOCK_GAS_LIMIT, TOTAL_FILECOIN};
+    pub fn valid_for_block_inclusion(
+        &self,
+        min_gas: i64,
+        version: fil_types::NetworkVersion,
+    ) -> Result<(), String> {
+        use fil_types::{NetworkVersion, BLOCK_GAS_LIMIT, TOTAL_FILECOIN, ZERO_ADDRESS};
         use num_traits::Signed;
         if self.version != 0 {
             return Err(format!("Message version: {} not  supported", self.version));
+        }
+        if self.to == *ZERO_ADDRESS && version >= NetworkVersion::V7 {
+            return Err("invalid 'to' address".to_string());
         }
         if self.value.is_negative() {
             return Err("message value cannot be negative".to_string());
@@ -101,9 +108,10 @@ impl UnsignedMessage {
         }
 
         if self.gas_limit < min_gas {
-            return Err(
-                "gas_limit cannot be less than cost of storing a message on chain".to_string(),
-            );
+            return Err(format!(
+                "gas_limit {} cannot be less than cost {} of storing a message on chain",
+                self.gas_limit, min_gas
+            ));
         }
 
         Ok(())
@@ -214,7 +222,10 @@ impl Cbor for UnsignedMessage {}
 #[cfg(feature = "json")]
 pub mod json {
     use super::*;
-    use serde::de;
+    use address::json::AddressJson;
+    use cid::Cid;
+    use num_bigint::bigint_ser;
+    use serde::{de, ser};
 
     /// Wrapper for serializing and deserializing a UnsignedMessage from JSON.
     #[derive(Deserialize, Serialize, Debug)]
@@ -242,17 +253,22 @@ pub mod json {
     #[serde(rename_all = "PascalCase")]
     struct JsonHelper {
         version: i64,
-        to: String,
-        from: String,
+        to: AddressJson,
+        from: AddressJson,
         #[serde(rename = "Nonce")]
         sequence: u64,
-        value: String,
+        #[serde(with = "bigint_ser::json")]
+        value: TokenAmount,
         gas_limit: i64,
-        gas_fee_cap: String,
-        gas_premium: String,
+        #[serde(with = "bigint_ser::json")]
+        gas_fee_cap: TokenAmount,
+        #[serde(with = "bigint_ser::json")]
+        gas_premium: TokenAmount,
         #[serde(rename = "Method")]
         method_num: u64,
         params: Option<String>,
+        #[serde(default, rename = "CID", with = "cid::json::opt")]
+        cid: Option<Cid>,
     }
 
     pub fn serialize<S>(m: &UnsignedMessage, serializer: S) -> Result<S::Ok, S::Error>
@@ -261,15 +277,16 @@ pub mod json {
     {
         JsonHelper {
             version: m.version,
-            to: m.to.to_string(),
-            from: m.from.to_string(),
+            to: m.to.into(),
+            from: m.from.into(),
             sequence: m.sequence,
-            value: m.value.to_string(),
+            value: m.value.clone(),
             gas_limit: m.gas_limit,
-            gas_fee_cap: m.gas_fee_cap.to_string(),
-            gas_premium: m.gas_premium.to_string(),
+            gas_fee_cap: m.gas_fee_cap.clone(),
+            gas_premium: m.gas_premium.clone(),
             method_num: m.method_num,
             params: Some(base64::encode(m.params.bytes())),
+            cid: Some(m.cid().map_err(ser::Error::custom)?),
         }
         .serialize(serializer)
     }
@@ -281,13 +298,13 @@ pub mod json {
         let m: JsonHelper = Deserialize::deserialize(deserializer)?;
         Ok(UnsignedMessage {
             version: m.version,
-            to: m.to.parse().map_err(de::Error::custom)?,
-            from: m.from.parse().map_err(de::Error::custom)?,
+            to: m.to.into(),
+            from: m.from.into(),
             sequence: m.sequence,
-            value: m.value.parse().map_err(de::Error::custom)?,
+            value: m.value,
             gas_limit: m.gas_limit,
-            gas_fee_cap: m.gas_fee_cap.parse().map_err(de::Error::custom)?,
-            gas_premium: m.gas_premium.parse().map_err(de::Error::custom)?,
+            gas_fee_cap: m.gas_fee_cap,
+            gas_premium: m.gas_premium,
             method_num: m.method_num,
             params: Serialized::new(
                 base64::decode(&m.params.unwrap_or_else(|| "".to_string()))

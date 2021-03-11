@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use super::SectorSize;
+use crate::NetworkVersion;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[cfg(feature = "proofs")]
 use std::convert::TryFrom;
 
+/// Seal proof type which defines the version and sector size.
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Hash)]
 pub enum RegisteredSealProof {
     StackedDRG2KiBV1,
@@ -14,18 +16,73 @@ pub enum RegisteredSealProof {
     StackedDRG8MiBV1,
     StackedDRG32GiBV1,
     StackedDRG64GiBV1,
+
+    StackedDRG2KiBV1P1,
+    StackedDRG512MiBV1P1,
+    StackedDRG8MiBV1P1,
+    StackedDRG32GiBV1P1,
+    StackedDRG64GiBV1P1,
     Invalid(i64),
 }
 
 impl RegisteredSealProof {
+    /// Returns registered seal proof for given sector size
+    pub fn from_sector_size(size: SectorSize, network_version: NetworkVersion) -> Self {
+        if network_version < NetworkVersion::V7 {
+            match size {
+                SectorSize::_2KiB => Self::StackedDRG2KiBV1,
+                SectorSize::_8MiB => Self::StackedDRG8MiBV1,
+                SectorSize::_512MiB => Self::StackedDRG512MiBV1,
+                SectorSize::_32GiB => Self::StackedDRG32GiBV1,
+                SectorSize::_64GiB => Self::StackedDRG64GiBV1,
+            }
+        } else {
+            match size {
+                SectorSize::_2KiB => Self::StackedDRG2KiBV1P1,
+                SectorSize::_8MiB => Self::StackedDRG8MiBV1P1,
+                SectorSize::_512MiB => Self::StackedDRG512MiBV1P1,
+                SectorSize::_32GiB => Self::StackedDRG32GiBV1P1,
+                SectorSize::_64GiB => Self::StackedDRG64GiBV1P1,
+            }
+        }
+    }
+
+    /// Convert the original proof type to the v1 proof added in network version 7.
+    pub fn update_to_v1(&mut self) {
+        *self = match self {
+            Self::StackedDRG2KiBV1 => Self::StackedDRG2KiBV1P1,
+            Self::StackedDRG512MiBV1 => Self::StackedDRG512MiBV1P1,
+            Self::StackedDRG8MiBV1 => Self::StackedDRG8MiBV1P1,
+            Self::StackedDRG32GiBV1 => Self::StackedDRG32GiBV1P1,
+            Self::StackedDRG64GiBV1 => Self::StackedDRG64GiBV1P1,
+            _ => return,
+        };
+    }
+
+    #[deprecated(since = "0.1.10", note = "Logic should exist in actors")]
     /// The maximum duration a sector sealed with this proof may exist between activation and expiration.
     pub fn sector_maximum_lifetime(self) -> clock::ChainEpoch {
         // For all Stacked DRG sectors, the max is 5 years
         let epochs_per_year = 1_262_277;
         5 * epochs_per_year
     }
+
+    /// Proof size for each SealProof type
+    pub fn proof_size(self) -> Result<usize, String> {
+        use RegisteredSealProof::*;
+        match self {
+            StackedDRG2KiBV1 | StackedDRG512MiBV1 | StackedDRG8MiBV1 | StackedDRG2KiBV1P1
+            | StackedDRG512MiBV1P1 | StackedDRG8MiBV1P1 => Ok(192),
+
+            StackedDRG32GiBV1 | StackedDRG64GiBV1 | StackedDRG32GiBV1P1 | StackedDRG64GiBV1P1 => {
+                Ok(1920)
+            }
+            Invalid(i) => Err(format!("unsupported proof type: {}", i)),
+        }
+    }
 }
 
+/// Proof of spacetime type, indicating version and sector size of the proof.
 #[derive(PartialEq, Eq, Copy, Clone, Debug, Hash)]
 pub enum RegisteredPoStProof {
     StackedDRGWinning2KiBV1,
@@ -78,6 +135,38 @@ impl RegisteredPoStProof {
             Invalid(i) => Err(format!("unsupported proof type: {}", i)),
         }
     }
+
+    /// Proof size for each PoStProof type
+    pub fn proof_size(self) -> Result<usize, String> {
+        use RegisteredPoStProof::*;
+        match self {
+            StackedDRGWinning2KiBV1
+            | StackedDRGWinning8MiBV1
+            | StackedDRGWinning512MiBV1
+            | StackedDRGWinning32GiBV1
+            | StackedDRGWinning64GiBV1
+            | StackedDRGWindow2KiBV1
+            | StackedDRGWindow8MiBV1
+            | StackedDRGWindow512MiBV1
+            | StackedDRGWindow32GiBV1
+            | StackedDRGWindow64GiBV1 => Ok(192),
+            Invalid(i) => Err(format!("unsupported proof type: {}", i)),
+        }
+    }
+    /// Returns the partition size, in sectors, associated with a proof type.
+    /// The partition size is the number of sectors proven in a single PoSt proof.
+    pub fn window_post_partitions_sector(self) -> Result<u64, String> {
+        // Resolve to post proof and then compute size from that.
+        use RegisteredPoStProof::*;
+        match self {
+            StackedDRGWinning64GiBV1 | StackedDRGWindow64GiBV1 => Ok(2300),
+            StackedDRGWinning32GiBV1 | StackedDRGWindow32GiBV1 => Ok(2349),
+            StackedDRGWinning2KiBV1 | StackedDRGWindow2KiBV1 => Ok(2),
+            StackedDRGWinning8MiBV1 | StackedDRGWindow8MiBV1 => Ok(2),
+            StackedDRGWinning512MiBV1 | StackedDRGWindow512MiBV1 => Ok(2),
+            Invalid(i) => Err(format!("unsupported proof type: {}", i)),
+        }
+    }
 }
 
 impl RegisteredSealProof {
@@ -85,11 +174,11 @@ impl RegisteredSealProof {
     pub fn sector_size(self) -> Result<SectorSize, String> {
         use RegisteredSealProof::*;
         match self {
-            StackedDRG2KiBV1 => Ok(SectorSize::_2KiB),
-            StackedDRG8MiBV1 => Ok(SectorSize::_8MiB),
-            StackedDRG512MiBV1 => Ok(SectorSize::_512MiB),
-            StackedDRG32GiBV1 => Ok(SectorSize::_32GiB),
-            StackedDRG64GiBV1 => Ok(SectorSize::_64GiB),
+            StackedDRG2KiBV1 | StackedDRG2KiBV1P1 => Ok(SectorSize::_2KiB),
+            StackedDRG8MiBV1 | StackedDRG8MiBV1P1 => Ok(SectorSize::_8MiB),
+            StackedDRG512MiBV1 | StackedDRG512MiBV1P1 => Ok(SectorSize::_512MiB),
+            StackedDRG32GiBV1 | StackedDRG32GiBV1P1 => Ok(SectorSize::_32GiB),
+            StackedDRG64GiBV1 | StackedDRG64GiBV1P1 => Ok(SectorSize::_64GiB),
             Invalid(i) => Err(format!("unsupported proof type: {}", i)),
         }
     }
@@ -100,11 +189,11 @@ impl RegisteredSealProof {
         // Resolve to seal proof and then compute size from that.
         use RegisteredSealProof::*;
         match self {
-            StackedDRG64GiBV1 => Ok(2300),
-            StackedDRG32GiBV1 => Ok(2349),
-            StackedDRG2KiBV1 => Ok(2),
-            StackedDRG8MiBV1 => Ok(2),
-            StackedDRG512MiBV1 => Ok(2),
+            StackedDRG64GiBV1 | StackedDRG64GiBV1P1 => Ok(2300),
+            StackedDRG32GiBV1 | StackedDRG32GiBV1P1 => Ok(2349),
+            StackedDRG2KiBV1 | StackedDRG2KiBV1P1 => Ok(2),
+            StackedDRG8MiBV1 | StackedDRG8MiBV1P1 => Ok(2),
+            StackedDRG512MiBV1 | StackedDRG512MiBV1P1 => Ok(2),
             Invalid(i) => Err(format!("unsupported proof type: {}", i)),
         }
     }
@@ -114,12 +203,12 @@ impl RegisteredSealProof {
     pub fn registered_winning_post_proof(self) -> Result<RegisteredPoStProof, String> {
         use RegisteredPoStProof::*;
         match self {
-            Self::StackedDRG64GiBV1 => Ok(StackedDRGWinning64GiBV1),
-            Self::StackedDRG32GiBV1 => Ok(StackedDRGWinning32GiBV1),
-            Self::StackedDRG2KiBV1 => Ok(StackedDRGWinning2KiBV1),
-            Self::StackedDRG8MiBV1 => Ok(StackedDRGWinning8MiBV1),
-            Self::StackedDRG512MiBV1 => Ok(StackedDRGWinning512MiBV1),
-            _ => Err(format!(
+            Self::StackedDRG64GiBV1 | Self::StackedDRG64GiBV1P1 => Ok(StackedDRGWinning64GiBV1),
+            Self::StackedDRG32GiBV1 | Self::StackedDRG32GiBV1P1 => Ok(StackedDRGWinning32GiBV1),
+            Self::StackedDRG2KiBV1 | Self::StackedDRG2KiBV1P1 => Ok(StackedDRGWinning2KiBV1),
+            Self::StackedDRG8MiBV1 | Self::StackedDRG8MiBV1P1 => Ok(StackedDRGWinning8MiBV1),
+            Self::StackedDRG512MiBV1 | Self::StackedDRG512MiBV1P1 => Ok(StackedDRGWinning512MiBV1),
+            Self::Invalid(_) => Err(format!(
                 "Unsupported mapping from {:?} to PoSt-winning RegisteredProof",
                 self
             )),
@@ -131,12 +220,12 @@ impl RegisteredSealProof {
     pub fn registered_window_post_proof(self) -> Result<RegisteredPoStProof, String> {
         use RegisteredPoStProof::*;
         match self {
-            Self::StackedDRG64GiBV1 => Ok(StackedDRGWindow64GiBV1),
-            Self::StackedDRG32GiBV1 => Ok(StackedDRGWindow32GiBV1),
-            Self::StackedDRG2KiBV1 => Ok(StackedDRGWindow2KiBV1),
-            Self::StackedDRG8MiBV1 => Ok(StackedDRGWindow8MiBV1),
-            Self::StackedDRG512MiBV1 => Ok(StackedDRGWindow512MiBV1),
-            _ => Err(format!(
+            Self::StackedDRG64GiBV1 | Self::StackedDRG64GiBV1P1 => Ok(StackedDRGWindow64GiBV1),
+            Self::StackedDRG32GiBV1 | Self::StackedDRG32GiBV1P1 => Ok(StackedDRGWindow32GiBV1),
+            Self::StackedDRG2KiBV1 | Self::StackedDRG2KiBV1P1 => Ok(StackedDRGWindow2KiBV1),
+            Self::StackedDRG8MiBV1 | Self::StackedDRG8MiBV1P1 => Ok(StackedDRGWindow8MiBV1),
+            Self::StackedDRG512MiBV1 | Self::StackedDRG512MiBV1P1 => Ok(StackedDRGWindow512MiBV1),
+            Self::Invalid(_) => Err(format!(
                 "Unsupported mapping from {:?} to PoSt-window RegisteredProof",
                 self
             )),
@@ -182,10 +271,16 @@ i64_conversion! {
 i64_conversion! {
     RegisteredSealProof;
     StackedDRG2KiBV1 => 0,
-    StackedDRG512MiBV1 => 1,
-    StackedDRG8MiBV1 => 2,
+    StackedDRG8MiBV1 => 1,
+    StackedDRG512MiBV1 => 2,
     StackedDRG32GiBV1 => 3,
     StackedDRG64GiBV1 => 4,
+
+    StackedDRG2KiBV1P1 => 5,
+    StackedDRG8MiBV1P1 => 6,
+    StackedDRG512MiBV1P1 => 7,
+    StackedDRG32GiBV1P1 => 8,
+    StackedDRG64GiBV1P1 => 9,
 }
 
 #[cfg(feature = "proofs")]
@@ -199,19 +294,12 @@ impl TryFrom<RegisteredSealProof> for filecoin_proofs_api::RegisteredSealProof {
             StackedDRG2KiBV1 => Ok(Self::StackedDrg2KiBV1),
             StackedDRG8MiBV1 => Ok(Self::StackedDrg8MiBV1),
             StackedDRG512MiBV1 => Ok(Self::StackedDrg512MiBV1),
+            StackedDRG64GiBV1P1 => Ok(Self::StackedDrg64GiBV1_1),
+            StackedDRG32GiBV1P1 => Ok(Self::StackedDrg32GiBV1_1),
+            StackedDRG2KiBV1P1 => Ok(Self::StackedDrg2KiBV1_1),
+            StackedDRG8MiBV1P1 => Ok(Self::StackedDrg8MiBV1_1),
+            StackedDRG512MiBV1P1 => Ok(Self::StackedDrg512MiBV1_1),
             Invalid(i) => Err(format!("unsupported proof type: {}", i)),
-        }
-    }
-}
-
-impl From<SectorSize> for RegisteredSealProof {
-    fn from(ss: SectorSize) -> Self {
-        match ss {
-            SectorSize::_2KiB => Self::StackedDRG2KiBV1,
-            SectorSize::_8MiB => Self::StackedDRG8MiBV1,
-            SectorSize::_512MiB => Self::StackedDRG512MiBV1,
-            SectorSize::_32GiB => Self::StackedDRG32GiBV1,
-            SectorSize::_64GiB => Self::StackedDRG64GiBV1,
         }
     }
 }

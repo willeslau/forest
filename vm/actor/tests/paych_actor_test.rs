@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 mod common;
-use actor::{
+use address::Address;
+use cid::Cid;
+use clock::ChainEpoch;
+use common::*;
+use crypto::Signature;
+use derive_builder::Builder;
+use forest_actor::{
     paych::{
         ConstructorParams, LaneState, Merge, Method, ModVerifyParams, PaymentVerifyParams,
         SignedVoucher, State as PState, UpdateChannelStateParams, MAX_LANE, SETTLE_DELAY,
@@ -10,12 +16,6 @@ use actor::{
     ACCOUNT_ACTOR_CODE_ID, INIT_ACTOR_ADDR, INIT_ACTOR_CODE_ID, MULTISIG_ACTOR_CODE_ID,
     PAYCH_ACTOR_CODE_ID,
 };
-use address::Address;
-use cid::Cid;
-use clock::ChainEpoch;
-use common::*;
-use crypto::Signature;
-use derive_builder::Builder;
 use ipld_amt::Amt;
 use num_bigint::BigInt;
 use std::collections::HashMap;
@@ -52,7 +52,7 @@ fn construct_lane_state_amt(rt: &MockRuntime, lss: Vec<LaneState>) -> Cid {
     arr.flush().unwrap()
 }
 
-fn get_lane_state(rt: &MockRuntime, cid: &Cid, lane: u64) -> LaneState {
+fn get_lane_state(rt: &MockRuntime, cid: &Cid, lane: usize) -> LaneState {
     let arr: Amt<LaneState, _> = Amt::load(cid, &rt.store).unwrap();
 
     arr.get(lane).unwrap().unwrap().clone()
@@ -102,7 +102,7 @@ mod paych_constructor {
             &mut rt,
             METHOD_CONSTRUCTOR,
             &Serialized::serialize(params).unwrap(),
-            ExitCode::ErrForbidden,
+            ExitCode::ErrIllegalArgument,
         );
     }
 
@@ -120,22 +120,13 @@ mod paych_constructor {
             expected_exit_code: ExitCode,
         }
 
-        let test_cases: Vec<TestCase> = vec![
-            TestCase {
-                paych_addr: paych_addr,
-                caller_code: INIT_ACTOR_CODE_ID.clone(),
-                new_actor_code: MULTISIG_ACTOR_CODE_ID.clone(),
-                payer_code: ACCOUNT_ACTOR_CODE_ID.clone(),
-                expected_exit_code: ExitCode::ErrForbidden,
-            },
-            TestCase {
-                paych_addr: Address::new_secp256k1(&vec![b'A'; 65][..]).unwrap(),
-                caller_code: INIT_ACTOR_CODE_ID.clone(),
-                new_actor_code: ACCOUNT_ACTOR_CODE_ID.clone(),
-                payer_code: ACCOUNT_ACTOR_CODE_ID.clone(),
-                expected_exit_code: ExitCode::ErrNotFound,
-            },
-        ];
+        let test_cases: Vec<TestCase> = vec![TestCase {
+            paych_addr: paych_addr,
+            caller_code: INIT_ACTOR_CODE_ID.clone(),
+            new_actor_code: MULTISIG_ACTOR_CODE_ID.clone(),
+            payer_code: ACCOUNT_ACTOR_CODE_ID.clone(),
+            expected_exit_code: ExitCode::ErrForbidden,
+        }];
 
         for test_case in test_cases {
             let mut actor_code_cids = HashMap::default();
@@ -296,7 +287,7 @@ mod create_lane_tests {
                 time_lock_min: test_case.tl_min,
                 time_lock_max: test_case.tl_max,
                 secret_pre_image: test_case.secret_preimage.clone(),
-                lane: test_case.lane,
+                lane: test_case.lane as usize,
                 nonce: test_case.nonce,
                 amount: BigInt::from(test_case.amt),
                 signature: test_case.sig.clone(),
@@ -570,7 +561,7 @@ mod merge_tests {
             sv.lane = 0;
             sv.nonce = tc.voucher;
             sv.merges = vec![Merge {
-                lane: tc.lane,
+                lane: tc.lane as usize,
                 nonce: tc.merge,
             }];
             rt.set_caller(ACCOUNT_ACTOR_CODE_ID.clone(), state.from);
@@ -605,7 +596,7 @@ mod merge_tests {
     fn lane_limit_exceeded() {
         let (mut rt, mut sv, _) = construct_runtime(1);
 
-        sv.lane = MAX_LANE as u64 + 1;
+        sv.lane = MAX_LANE as usize + 1;
         sv.nonce += 1;
         sv.amount = BigInt::from(100);
         failure_end(&mut rt, sv, ExitCode::ErrIllegalArgument);
@@ -651,6 +642,7 @@ mod update_channel_state_extra {
         (rt, sv)
     }
     #[test]
+    #[ignore = "old functionality -- test framework needs to be updated"]
     fn extra_call_succeed() {
         let (mut rt, sv) = construct_runtime(ExitCode::Ok);
         call(
@@ -662,6 +654,7 @@ mod update_channel_state_extra {
     }
 
     #[test]
+    #[ignore = "old functionality -- test framework needs to be updated"]
     fn extra_call_fail() {
         let (mut rt, sv) = construct_runtime(ExitCode::ErrPlaceholder);
         expect_error(
@@ -771,7 +764,6 @@ mod secret_preimage {
         let state: PState = rt.get_state().unwrap();
 
         let mut ucp = UpdateChannelStateParams {
-            proof: vec![],
             secret: b"Profesr".to_vec(),
             sv: sv.clone(),
         };
@@ -1017,7 +1009,7 @@ fn require_add_new_lane(rt: &mut MockRuntime, param: LaneParams) -> SignedVouche
     let mut sv = SignedVoucher {
         time_lock_min: param.epoch_num,
         time_lock_max: i64::MAX,
-        lane: param.lane,
+        lane: param.lane as usize,
         nonce: param.nonce,
         amount: param.amt.clone(),
         signature: Some(sig.clone()),
@@ -1084,5 +1076,5 @@ fn verify_state(rt: &mut MockRuntime, exp_lanes: Option<u64>, expected_state: PS
 
 fn assert_lane_states_length(rt: &MockRuntime, cid: &Cid, l: u64) {
     let arr = Amt::<LaneState, _>::load(cid, &rt.store).unwrap();
-    assert_eq!(arr.count(), l);
+    assert_eq!(arr.count(), l as usize);
 }

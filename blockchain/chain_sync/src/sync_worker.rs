@@ -6,56 +6,56 @@ mod full_sync_test;
 #[cfg(test)]
 mod validate_block_test;
 
-use super::bad_block_cache::BadBlockCache;
 use super::sync_state::{SyncStage, SyncState};
-use super::{Error, SyncNetworkContext};
-use actor::{is_account_actor, make_map_with_root, power, STORAGE_POWER_ACTOR_ADDR};
-use address::Address;
-use amt::Amt;
-use async_std::sync::{Receiver, RwLock};
-use async_std::task::{self, JoinHandle};
-use beacon::{Beacon, BeaconEntry, IGNORE_DRAND_VAR};
-use blocks::{Block, BlockHeader, FullTipset, Tipset, TipsetKeys, TxMeta};
-use chain::{persist_objects, ChainStore};
-use cid::{multihash::Blake2b256, Cid};
-use crypto::{verify_bls_aggregate, DomainSeparationTag};
-use encoding::{Cbor, Error as EncodingError};
-use fil_types::{
-    verifier::ProofVerifier, Randomness, ALLOWABLE_CLOCK_DRIFT, BLOCK_DELAY_SECS, BLOCK_GAS_LIMIT,
-    TICKET_RANDOMNESS_LOOKBACK, UPGRADE_SMOKE_HEIGHT,
+use super::{
+    bad_block_cache::BadBlockCache,
+    sync::{compute_msg_meta, ChainSyncState},
 };
-use forest_libp2p::blocksync::TipsetBundle;
+use super::{network_context::SyncNetworkContext, Error};
+use actor::{is_account_actor, power};
+use address::Address;
+use async_std::channel::Receiver;
+use async_std::sync::{Mutex, RwLock};
+use async_std::task::{self, JoinHandle};
+use beacon::{Beacon, BeaconEntry, BeaconSchedule, IGNORE_DRAND_VAR};
+use blocks::{Block, BlockHeader, FullTipset, Tipset, TipsetKeys};
+use chain::{persist_objects, ChainStore};
+use cid::Cid;
+use crypto::{verify_bls_aggregate, DomainSeparationTag};
+use encoding::Cbor;
+use fil_types::{
+    verifier::ProofVerifier, NetworkVersion, Randomness, ALLOWABLE_CLOCK_DRIFT, BLOCK_GAS_LIMIT,
+    TICKET_RANDOMNESS_LOOKBACK,
+};
+use forest_libp2p::chain_exchange::TipsetBundle;
 use futures::stream::{FuturesUnordered, StreamExt};
 use interpreter::price_list_by_epoch;
 use ipld_blockstore::BlockStore;
 use log::{debug, info, warn};
-use message::{Message, SignedMessage, UnsignedMessage};
+use message::{Message, UnsignedMessage};
+use networks::{get_network_version_default, BLOCK_DELAY_SECS, UPGRADE_SMOKE_HEIGHT};
 use state_manager::StateManager;
 use state_tree::StateTree;
-use std::cmp::min;
 use std::collections::HashMap;
-use std::convert::TryInto;
 use std::error::Error as StdError;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
+use std::{cmp::min, convert::TryFrom};
 
-/// Worker to handle syncing chain with the blocksync protocol.
+/// Worker to handle syncing chain with the chain_exchange protocol.
 pub(crate) struct SyncWorker<DB, TBeacon, V> {
     /// State of the sync worker.
     pub state: Arc<RwLock<SyncState>>,
 
     /// Drand randomness beacon.
-    pub beacon: Arc<TBeacon>,
+    pub beacon: Arc<BeaconSchedule<TBeacon>>,
 
     /// manages retrieving and updates state objects.
     pub state_manager: Arc<StateManager<DB>>,
 
-    /// access and store tipsets / blocks / messages.
-    pub chain_store: Arc<ChainStore<DB>>,
-
     /// Context to be able to send requests to p2p network.
-    pub network: SyncNetworkContext,
+    pub network: SyncNetworkContext<DB>,
 
     /// The known genesis tipset.
     pub genesis: Arc<Tipset>,
@@ -66,6 +66,9 @@ pub(crate) struct SyncWorker<DB, TBeacon, V> {
 
     /// Proof verification implementation.
     pub verifier: PhantomData<V>,
+
+    /// Number of tipsets requested over chain exchange
+    pub req_window: i64,
 }
 
 impl<DB, TBeacon, V> SyncWorker<DB, TBeacon, V>
@@ -74,13 +77,26 @@ where
     DB: BlockStore + Sync + Send + 'static,
     V: ProofVerifier + Sync + Send + 'static,
 {
-    pub async fn spawn(self, mut inbound_channel: Receiver<Arc<Tipset>>) -> JoinHandle<()> {
+    fn chain_store(&self) -> &Arc<ChainStore<DB>> {
+        self.state_manager.chain_store()
+    }
+
+    pub async fn spawn(
+        self,
+        mut inbound_channel: Receiver<Arc<Tipset>>,
+        state: Arc<Mutex<ChainSyncState>>,
+        id: usize,
+    ) -> JoinHandle<()> {
         task::spawn(async move {
             while let Some(ts) = inbound_channel.next().await {
-                if let Err(e) = self.sync(ts).await {
-                    let err = e.to_string();
-                    warn!("failed to sync tipset: {}", &err);
-                    self.state.write().await.error(err);
+                info!("Worker #{} starting work on: {:?}", id, ts.key());
+                match self.sync(ts).await {
+                    Ok(()) => *state.lock().await = ChainSyncState::Follow,
+                    Err(e) => {
+                        let err = e.to_string();
+                        warn!("failed to sync tipset: {}", &err);
+                        self.state.write().await.error(err);
+                    }
                 }
             }
         })
@@ -90,31 +106,29 @@ where
     pub async fn sync(&self, head: Arc<Tipset>) -> Result<(), Error> {
         // Bootstrap peers before syncing
         // TODO increase bootstrap peer count before syncing
-        const MIN_PEERS: usize = 1;
-        loop {
-            let peer_count = self.network.peer_manager().len().await;
-            if peer_count < MIN_PEERS {
-                debug!("bootstrapping peers, have {}", peer_count);
-                task::sleep(Duration::from_secs(2)).await;
-            } else {
-                break;
-            }
-        }
+        // TODO: Commented this out to allow for a 1 node devnet when testing miner interop. Needs to be looked into how to best handle this.
+        // const MIN_PEERS: usize = 1;
+        // loop {
+        //     let peer_count = self.network.peer_manager().len().await;
+        //     if peer_count < MIN_PEERS {
+        //         debug!("bootstrapping peers, have {}", peer_count);
+        //         task::sleep(Duration::from_secs(2)).await;
+        //     } else {
+        //         break;
+        //     }
+        // }
 
         // Get heaviest tipset from storage to sync toward
-        let heaviest = self.chain_store.heaviest_tipset().await.unwrap();
+        let heaviest = self.chain_store().heaviest_tipset().await.unwrap();
 
-        info!("Starting block sync...");
+        info!("Starting chain sync...");
 
         // Sync headers from network from head to heaviest from storage
         self.state
             .write()
             .await
             .init(heaviest.clone(), head.clone());
-        let tipsets = match self
-            .sync_headers_reverse(head.as_ref().clone(), &heaviest)
-            .await
-        {
+        let tipsets = match self.sync_headers_reverse(head.clone(), &heaviest).await {
             Ok(ts) => ts,
             Err(e) => {
                 self.state.write().await.error(e.to_string());
@@ -124,8 +138,8 @@ where
 
         // Persist header chain pulled from network
         self.set_stage(SyncStage::PersistHeaders).await;
-        let headers: Vec<&BlockHeader> = tipsets.iter().map(|t| t.blocks()).flatten().collect();
-        if let Err(e) = persist_objects(self.chain_store.blockstore(), &headers) {
+        let headers: Vec<&BlockHeader> = tipsets.iter().flat_map(|t| t.blocks()).collect();
+        if let Err(e) = persist_objects(self.chain_store().blockstore(), &headers) {
             self.state.write().await.error(e.to_string());
             return Err(e.into());
         }
@@ -138,7 +152,7 @@ where
         self.set_stage(SyncStage::Complete).await;
 
         // At this point the head is synced and the head can be set as the heaviest.
-        self.chain_store.put_tipset(head.as_ref()).await?;
+        self.chain_store().put_tipset(&head).await?;
 
         Ok(())
     }
@@ -150,53 +164,58 @@ where
     }
 
     /// Syncs chain data and persists it to blockstore
-    async fn sync_headers_reverse(&self, head: Tipset, to: &Tipset) -> Result<Vec<Tipset>, Error> {
+    async fn sync_headers_reverse(
+        &self,
+        head: Arc<Tipset>,
+        to: &Tipset,
+    ) -> Result<Vec<Arc<Tipset>>, Error> {
         info!("Syncing headers from: {:?}", head.key());
         self.state.write().await.set_epoch(to.epoch());
 
         let mut accepted_blocks: Vec<Cid> = Vec::new();
 
         let sync_len = head.epoch() - to.epoch();
-        if !sync_len.is_positive() {
+        if sync_len < 0 {
             return Err(Error::Other(
                 "Target tipset must be after heaviest".to_string(),
             ));
         }
-        let mut return_set = Vec::with_capacity(sync_len as usize);
+
+        // invariant: never empty, only appended to
+        let mut return_set = Vec::with_capacity(sync_len as usize + 1);
         return_set.push(head);
 
-        let to_epoch = to.blocks().get(0).expect("Tipset cannot be empty").epoch();
+        // Loop until most recent tipset height is less than or equal to tipset height
+        'sync: loop {
+            let cur_ts = return_set.last().unwrap();
 
-        // Loop until most recent tipset height is less than to tipset height
-        'sync: while let Some(cur_ts) = return_set.last() {
             // Check if parent cids exist in bad block caches
             self.validate_tipset_against_cache(cur_ts.parents(), &accepted_blocks)
                 .await?;
 
-            if cur_ts.epoch() <= to_epoch {
+            if cur_ts.epoch() <= to.epoch() {
                 // Current tipset is less than epoch of tipset syncing toward
                 break;
             }
 
             // Try to load parent tipset from local storage
-            if let Ok(ts) = self.chain_store.tipset_from_keys(cur_ts.parents()) {
+            if let Ok(ts) = self.chain_store().tipset_from_keys(cur_ts.parents()).await {
                 // Add blocks in tipset to accepted chain and push the tipset to return set
                 accepted_blocks.extend_from_slice(ts.cids());
                 return_set.push(ts);
                 continue;
             }
 
+            let epoch_diff = cur_ts.epoch() - to.epoch();
+            debug!("ChainExchange from: {} to {}", cur_ts.epoch(), to.epoch());
             // TODO tweak request window when socket frame is tested
-            const REQUEST_WINDOW: i64 = 10;
-            let epoch_diff = cur_ts.epoch() - to_epoch;
-            debug!("BlockSync from: {} to {}", cur_ts.epoch(), to_epoch);
-            let window = min(epoch_diff, REQUEST_WINDOW);
+            let window = min(epoch_diff, self.req_window);
 
-            // Load blocks from network using blocksync
+            // Load blocks from network using chain_exchange
             // TODO consider altering window size before returning error for failed sync.
             let tipsets = self
                 .network
-                .blocksync_headers(None, cur_ts.parents(), window as u64)
+                .chain_exchange_headers(None, cur_ts.parents(), window as u64)
                 .await?;
 
             info!(
@@ -207,7 +226,7 @@ where
 
             // Loop through each tipset received from network
             for ts in tipsets {
-                if ts.epoch() < to_epoch {
+                if ts.epoch() < to.epoch() {
                     // Break out of sync loop if epoch lower than to tipset
                     // This should not be hit if response from server is correct
                     break 'sync;
@@ -223,18 +242,16 @@ where
             }
         }
 
-        let last_ts = return_set
-            .last()
-            .ok_or_else(|| Error::Other("Return set should contain a tipset".to_owned()))?;
+        let last_ts = return_set.last().unwrap();
+        if last_ts.parents() == to.parents() {
+            // block received part of same tipset as best block
+            // This removes need to sync fork
+            return Ok(return_set);
+        }
 
         // Check if local chain was fork
         if last_ts.key() != to.key() {
             info!("Local chain was fork. Syncing fork...");
-            if last_ts.parents() == to.parents() {
-                // block received part of same tipset as best block
-                // This removes need to sync fork
-                return Ok(return_set);
-            }
             // add fork into return set
             let fork = self.sync_fork(&last_ts, &to).await?;
             info!("Fork Synced");
@@ -254,7 +271,7 @@ where
             if let Some(reason) = self.bad_blocks.get(cid).await {
                 for bh in accepted_blocks {
                     self.bad_blocks
-                        .put(bh.clone(), format!("chain contained {}", cid))
+                        .put(*bh, format!("chain contained {}", cid))
                         .await;
                 }
 
@@ -268,30 +285,48 @@ where
     }
 
     /// fork detected, collect tipsets to be included in return_set sync_headers_reverse
-    async fn sync_fork(&self, head: &Tipset, to: &Tipset) -> Result<Vec<Tipset>, Error> {
+    async fn sync_fork(&self, head: &Tipset, to: &Tipset) -> Result<Vec<Arc<Tipset>>, Error> {
         // TODO move to shared parameter (from actors crate most likely)
+        // TODO the threshold should really be 900. Not entirely sure if we can handle a 900
+        // epoch fork, so we set to 500 for now. If we cant, then we can split up requests into 900/N chunks.
         const FORK_LENGTH_THRESHOLD: u64 = 500;
 
-        // TODO make this request more flexible with the window size, shouldn't require a node
-        // to have to request all fork length headers at once.
         let tips = self
             .network
-            .blocksync_headers(None, head.parents(), FORK_LENGTH_THRESHOLD)
+            .chain_exchange_headers(None, head.parents(), FORK_LENGTH_THRESHOLD)
             .await?;
 
-        let mut ts = self.chain_store.tipset_from_keys(to.parents())?;
+        let mut ts = self.chain_store().tipset_from_keys(to.parents()).await?;
+        let mut fork_length = 1;
 
-        for i in 0..tips.len() {
-            while ts.epoch() > tips[i].epoch() {
-                if ts.epoch() == 0 {
-                    return Err(Error::Other(
-                        "Synced chain forked at genesis, refusing to sync".to_string(),
-                    ));
+        for (i, tip) in tips.iter().enumerate() {
+            if ts.epoch() == 0 {
+                if self.genesis != ts {
+                    return Err(
+                        Error::Other(
+                            format!("synced chain that linked back to a different genesis. Our genesis: {:?}, Fork Genesis: {:?}",self.genesis.key(), ts.key())
+                        ));
                 }
-                ts = self.chain_store.tipset_from_keys(ts.parents())?;
+                return Err(Error::Other(format!(
+                    "Chain forked at genesis, refusing to sync: {:?}",
+                    head.cids()
+                )));
             }
-            if ts == tips[i] {
-                return Ok(tips[0..=i].to_vec());
+            if ts == *tip {
+                let mut tips = tips;
+                tips.drain((i + 1)..);
+                return Ok(tips);
+            }
+
+            if ts.epoch() < tip.epoch() {
+                continue;
+            } else {
+                fork_length += 1;
+                if fork_length > FORK_LENGTH_THRESHOLD {
+                    return Err(Error::Other("fork too long".to_string()));
+                }
+                // TODO: Check checkpoint when we have it implemented.
+                ts = self.chain_store().tipset_from_keys(ts.parents()).await?;
             }
         }
 
@@ -300,22 +335,28 @@ where
         ))
     }
 
-    /// Syncs messages by first checking state for message existence otherwise fetches messages from blocksync
-    async fn sync_messages_check_state(&self, tipsets: Vec<Tipset>) -> Result<(), Error> {
+    /// Syncs messages by first checking state for message existence otherwise fetches messages from
+    /// chain exchange.
+    async fn sync_messages_check_state(&self, tipsets: Vec<Arc<Tipset>>) -> Result<(), Error> {
         let mut ts_iter = tipsets.into_iter().rev();
         // Currently syncing 1 height at a time, no reason for us to sync more
         const REQUEST_WINDOW: usize = 1;
 
         while let Some(ts) = ts_iter.next() {
             // check storage first to see if we have full tipset
-            let fts = match self.chain_store.fill_tipset(ts) {
-                Ok(fts) => fts,
-                Err(ts) => {
-                    // no full tipset in storage; request messages via blocksync
+            match self.chain_store().fill_tipset(&ts) {
+                Some(fts) => {
+                    // full tipset found in storage; validate and continue
+                    let curr_epoch = fts.epoch();
+                    self.validate_tipset(fts).await?;
+                    self.state.write().await.set_epoch(curr_epoch);
+                }
+                None => {
+                    // no full tipset in storage; request messages via chain_exchange
 
                     let batch_size = REQUEST_WINDOW;
                     debug!(
-                        "BlockSync message sync tipsets: epoch: {}, len: {}",
+                        "ChainExchange message sync tipsets: epoch: {}, len: {}",
                         ts.epoch(),
                         batch_size
                     );
@@ -323,24 +364,24 @@ where
                     // receive tipset bundle from block sync
                     let compacted_messages = self
                         .network
-                        .blocksync_messages(None, ts.key(), batch_size as u64)
+                        .chain_exchange_messages(None, ts.key(), batch_size as u64)
                         .await?;
 
                     // Chain current tipset with iterator
                     let mut bs_iter = std::iter::once(ts).chain(&mut ts_iter);
 
                     // since the bundle only has messages, we have to put the headers in them
-                    for messages in compacted_messages.into_iter() {
+                    for messages in compacted_messages {
                         let t = bs_iter.next().ok_or_else(|| {
                             Error::Other("Messages returned exceeded tipsets in chain".to_string())
                         })?;
 
                         let bundle = TipsetBundle {
-                            blocks: t.into_blocks(),
+                            blocks: t.blocks().to_vec(),
                             messages: Some(messages),
                         };
                         // construct full tipsets from fetched messages
-                        let fts: FullTipset = (&bundle).try_into().map_err(Error::Other)?;
+                        let fts = FullTipset::try_from(&bundle).map_err(Error::Other)?;
 
                         // validate tipset and messages
                         let curr_epoch = fts.epoch();
@@ -349,21 +390,15 @@ where
 
                         // store messages
                         if let Some(m) = bundle.messages {
-                            self.chain_store.put_messages(&m.bls_msgs)?;
-                            self.chain_store.put_messages(&m.secp_msgs)?;
+                            let bs = self.state_manager.blockstore();
+                            chain::persist_objects(bs, &m.bls_msgs)?;
+                            chain::persist_objects(bs, &m.secp_msgs)?;
                         } else {
-                            warn!("Blocksync request for messages returned null messages");
+                            warn!("Chain Exchange request for messages returned null messages");
                         }
                     }
-
-                    continue;
                 }
-            };
-            // full tipset found in storage; validate and continue
-            let curr_epoch = fts.epoch();
-            self.validate_tipset(fts).await?;
-            self.state.write().await.set_epoch(curr_epoch);
-            continue;
+            }
         }
 
         Ok(())
@@ -371,26 +406,28 @@ where
 
     /// validates tipsets and adds header data to tipset tracker
     async fn validate_tipset(&self, fts: FullTipset) -> Result<(), Error> {
-        if &fts.to_tipset() == self.genesis.as_ref() {
+        if fts.key() == self.genesis.key() {
             debug!("Skipping tipset validation for genesis");
             return Ok(());
         }
 
         let epoch = fts.epoch();
+        let fts_key = fts.key().clone();
 
         let mut validations = FuturesUnordered::new();
         for b in fts.into_blocks() {
-            let cs = self.chain_store.clone();
             let sm = self.state_manager.clone();
             let bc = self.beacon.clone();
-            let v = task::spawn(async move { Self::validate_block(cs, sm, bc, Arc::new(b)).await });
+            let v = task::spawn(async move { Self::validate_block(sm, bc, Arc::new(b)).await });
             validations.push(v);
         }
 
         while let Some(result) = validations.next().await {
             match result {
-                Ok(b) => {
-                    self.chain_store.set_tipset_tracker(b.header()).await?;
+                Ok(block) => {
+                    self.chain_store()
+                        .add_to_tipset_tracker(block.header())
+                        .await;
                 }
                 Err((cid, e)) => {
                     // If the error is temporally invalidated, don't add to bad blocks cache.
@@ -401,7 +438,10 @@ where
                 }
             }
         }
-        info!("Successfully validated tipset at epoch: {}", epoch);
+        info!(
+            "Successfully validated tipset {:?} at epoch: {}",
+            fts_key, epoch
+        );
         Ok(())
     }
 
@@ -409,9 +449,8 @@ where
     /// Returns the validated block if `Ok`.
     /// Returns the block cid (for marking bad) and `Error` if invalid (`Err`).
     async fn validate_block(
-        cs: Arc<ChainStore<DB>>,
         sm: Arc<StateManager<DB>>,
-        bc: Arc<TBeacon>,
+        bc: Arc<BeaconSchedule<TBeacon>>,
         block: Arc<Block>,
     ) -> Result<Arc<Block>, (Cid, Error)> {
         debug!(
@@ -420,12 +459,13 @@ where
             block.header().weight()
         );
 
+        let cs = sm.chain_store().clone();
         let block_cid = block.cid();
 
         // Check block validation cache in store.
         let is_validated = cs
             .is_block_validated(block_cid)
-            .map_err(|e| (block_cid.clone(), e.into()))?;
+            .map_err(|e| (*block_cid, e.into()))?;
         if is_validated {
             return Ok(block);
         }
@@ -435,30 +475,26 @@ where
         let header = block.header();
 
         // Check to ensure all optional values exist
-        block_sanity_checks(header).map_err(|e| (block_cid.clone(), e.into()))?;
+        block_sanity_checks(header).map_err(|e| (*block_cid, e.into()))?;
 
-        let base_ts = Arc::new(
-            cs.tipset_from_keys(header.parents())
-                .map_err(|e| (block_cid.clone(), e.into()))?,
-        );
+        let base_ts = cs
+            .tipset_from_keys(header.parents())
+            .await
+            .map_err(|e| (*block_cid, e.into()))?;
+        let win_p_nv = sm.get_network_version(base_ts.epoch());
 
         // Retrieve lookback tipset for validation.
-        let lbts = cs
-            .get_lookback_tipset_for_round(&base_ts, block.header().epoch())
-            .map_err(|e| (block_cid.clone(), e.into()))?
-            .map(Arc::new)
-            .unwrap_or_else(|| Arc::clone(&base_ts));
+        let (lbts, lbst) = sm
+            .get_lookback_tipset_for_round::<V>(base_ts.clone(), block.header().epoch())
+            .await
+            .map_err(|e| (*block_cid, e.into()))?;
 
-        let (lbst, _) = sm.tipset_state::<V>(&lbts).await.map_err(|e| {
-            (
-                block_cid.clone(),
-                Error::Validation(format!("Could not update state: {}", e.to_string())),
-            )
-        })?;
         let lbst = Arc::new(lbst);
 
-        let prev_beacon = chain::latest_beacon_entry(cs.blockstore(), base_ts.as_ref())
-            .map_err(|e| (block_cid.clone(), e.into()))?;
+        let prev_beacon = cs
+            .latest_beacon_entry(&base_ts)
+            .await
+            .map_err(|e| (*block_cid, e.into()))?;
         let prev_beacon = Arc::new(prev_beacon);
 
         // Timestamp checks
@@ -466,7 +502,7 @@ where
         let target_timestamp = base_ts.min_timestamp() + BLOCK_DELAY_SECS * (nulls + 1);
         if target_timestamp != header.timestamp() {
             return Err((
-                block_cid.clone(),
+                *block_cid,
                 Error::Validation(format!(
                     "block had the wrong timestamp: {} != {}",
                     header.timestamp(),
@@ -479,10 +515,7 @@ where
             .expect("Retrieved system time before UNIX epoch")
             .as_secs();
         if header.timestamp() > time_now + ALLOWABLE_CLOCK_DRIFT {
-            return Err((
-                block_cid.clone(),
-                Error::Temporal(time_now, header.timestamp()),
-            ));
+            return Err((*block_cid, Error::Temporal(time_now, header.timestamp())));
         } else if header.timestamp() > time_now {
             warn!(
                 "Got block from the future, but within clock drift threshold, {} > {}",
@@ -494,7 +527,7 @@ where
         // Work address needed for async validations, so necessary to do sync to avoid duplication.
         let work_addr = sm
             .get_miner_work_addr(&lbst, header.miner_address())
-            .map_err(|e| (block_cid.clone(), e.into()))?;
+            .map_err(|e| (*block_cid, e.into()))?;
 
         // Async validations
 
@@ -513,11 +546,7 @@ where
         let base_ts_clone = Arc::clone(&base_ts);
         validations.push(task::spawn_blocking(move || {
             let h = b_cloned.header();
-            Self::validate_miner(
-                sm_c.as_ref(),
-                h.miner_address(),
-                base_ts_clone.parent_state(),
-            )
+            Self::validate_miner(&sm_c, h.miner_address(), base_ts_clone.parent_state())
         }));
 
         // * base fee check
@@ -563,7 +592,7 @@ where
         validations.push(task::spawn(async move {
             let h = b_cloned.header();
             let (state_root, rec_root) = sm_cloned
-                .tipset_state::<V>(base_ts_clone.as_ref())
+                .tipset_state::<V>(&base_ts_clone)
                 .await
                 .map_err(|e| Error::Other(format!("Failed to calculate state: {}", e)))?;
             if &state_root != h.state_root() {
@@ -600,10 +629,10 @@ where
                 ));
             }
 
-            let hp = sm_c.miner_has_min_power(h.miner_address(), &lbts)?;
+            let hp = sm_c.eligible_to_mine(h.miner_address(), &base_ts_clone, &lbts)?;
             if !hp {
                 return Err(Error::Validation(
-                    "Block's miner does not meet minimum power threshold".to_string(),
+                    "Block's miner is ineligible to mine".to_string(),
                 ));
             }
 
@@ -630,7 +659,9 @@ where
                 ));
             }
 
-            let (mpow, tpow) = sm_c.get_power(&lbst_clone, h.miner_address())?;
+            let (mpow, tpow) = sm_c
+                .get_power(&lbst_clone, Some(h.miner_address()))?
+                .ok_or_else(|| Error::Other("Should have loaded power for address".to_string()))?;
 
             let j =
                 election_proof.compute_win_count(&mpow.quality_adj_power, &tpow.quality_adj_power);
@@ -648,23 +679,18 @@ where
         let b_cloned = Arc::clone(&block);
         let p_beacon = Arc::clone(&prev_beacon);
         validations.push(task::spawn_blocking(move || {
-            // TODO switch logic to function attached to block header
-            let block_sig_bytes = b_cloned.header().to_signing_bytes()?;
-
-            // Can unwrap here because verified to be `Some` in the sanity checks.
-            let block_sig = b_cloned.header().signature().as_ref().unwrap();
-            block_sig
-                .verify(&block_sig_bytes, &work_addr)
-                .map_err(|e| Error::Blockchain(blocks::Error::InvalidSignature(e)))
+            b_cloned.header().check_block_signature(&work_addr)?;
+            Ok(())
         }));
 
         // * Beacon values check
         if std::env::var(IGNORE_DRAND_VAR) != Ok("1".to_owned()) {
             let block_cloned = Arc::clone(&block);
+            let parent_epoch = base_ts.epoch();
             validations.push(task::spawn(async move {
                 block_cloned
                     .header()
-                    .validate_block_drand(bc.as_ref(), p_beacon.as_ref())
+                    .validate_block_drand(bc.as_ref(), parent_epoch, &p_beacon)
                     .await
                     .map_err(|e| {
                         Error::Validation(format!(
@@ -685,7 +711,6 @@ where
             if h.epoch() > UPGRADE_SMOKE_HEIGHT {
                 let vrf_proof = base_ts
                     .min_ticket()
-                    .as_ref()
                     .ok_or("Base tipset did not have ticket to verify")?
                     .vrfproof
                     .as_bytes();
@@ -716,13 +741,8 @@ where
         // * Winning PoSt proof validation
         let b_clone = block.clone();
         validations.push(task::spawn_blocking(move || {
-            Self::verify_winning_post_proof(
-                sm.as_ref(),
-                b_clone.header(),
-                prev_beacon.as_ref(),
-                &lbst,
-            )
-            .map_err(|e| format!("Verify winning PoSt failed: {}", e))?;
+            Self::verify_winning_post_proof(&sm, win_p_nv, b_clone.header(), &prev_beacon, &lbst)
+                .map_err(|e| format!("Verify winning PoSt failed: {}", e))?;
 
             Ok(())
         }));
@@ -737,12 +757,12 @@ where
         // combine vec of error strings and return Validation error with this resultant string
         if !error_vec.is_empty() {
             let error_string = error_vec.join(", ");
-            return Err((block_cid.clone(), Error::Validation(error_string)));
+            return Err((*block_cid, Error::Validation(error_string)));
         }
 
         cs.mark_block_as_validated(block_cid).map_err(|e| {
             (
-                block_cid.clone(),
+                *block_cid,
                 Error::Validation(format!(
                     "failed to mark block {} as validated: {}",
                     block_cid, e
@@ -757,8 +777,9 @@ where
     fn check_block_msgs(
         state_manager: Arc<StateManager<DB>>,
         block: &Block,
-        base_ts: &Tipset,
+        base_ts: &Arc<Tipset>,
     ) -> Result<(), Box<dyn StdError>> {
+        let nv = get_network_version_default(block.header().epoch());
         // do the initial loop here
         // Check Block Message and Signatures in them
         let mut pub_keys = Vec::new();
@@ -804,7 +825,7 @@ where
          -> Result<(), Box<dyn StdError>> {
             // Phase 1: syntactic validation
             let min_gas = pl.on_chain_message(msg.marshal_cbor().unwrap().len());
-            msg.valid_for_block_inclusion(min_gas.total())?;
+            msg.valid_for_block_inclusion(min_gas.total(), nv)?;
 
             sum_gas_limit += msg.gas_limit();
             if sum_gas_limit > BLOCK_GAS_LIMIT {
@@ -817,7 +838,7 @@ where
                 Some(sequence) => *sequence,
                 // Sequence does not exist in map, get actor from state
                 None => {
-                    let act = tree.get_actor(msg.from())?.ok_or_else(|| {
+                    let act = tree.get_actor(msg.from())?.ok_or({
                         "Failed to retrieve nonce for addr: Actor does not exist in state"
                     })?;
 
@@ -885,6 +906,7 @@ where
 
     fn verify_winning_post_proof(
         sm: &StateManager<DB>,
+        nv: NetworkVersion,
         header: &BlockHeader,
         prev_entry: &BeaconEntry,
         lbst: &Cid,
@@ -892,7 +914,22 @@ where
     where
         V: ProofVerifier,
     {
-        // TODO allow for insecure validation to skip these checks
+        if cfg!(feature = "insecure_post") {
+            let wpp = header.winning_post_proof();
+            if wpp.is_empty() {
+                return Err(Error::Validation(
+                    "[INSECURE-POST-VALIDATION] No winning post proof given".to_string(),
+                ));
+            }
+
+            if wpp[0].proof_bytes == b"valid proof" {
+                return Ok(());
+            }
+
+            return Err(Error::Validation(
+                "[INSECURE-POST-VALIDATION] winning post was invalid".to_string(),
+            ));
+        }
 
         let buf = header.miner_address().marshal_cbor()?;
 
@@ -920,7 +957,7 @@ where
         })?;
 
         let sectors = sm
-            .get_sectors_for_winning_post::<V>(&lbst, &header.miner_address(), Randomness(rand))
+            .get_sectors_for_winning_post::<V>(&lbst, nv, &header.miner_address(), Randomness(rand))
             .map_err(|e| {
                 Error::Validation(format!("Failed to get sectors for post: {}", e.to_string()))
             })?;
@@ -931,25 +968,22 @@ where
     }
 
     fn validate_miner(sm: &StateManager<DB>, maddr: &Address, ts_state: &Cid) -> Result<(), Error> {
-        let spast: power::State = sm
-            .load_actor_state(&*STORAGE_POWER_ACTOR_ADDR, ts_state)
-            .map_err(|e| format!("Could not load power state: {}", e))?;
+        let act = sm
+            .get_actor(power::ADDRESS, ts_state)?
+            .ok_or("Failed to load power actor for calculating weight")?;
+        let state = power::State::load(sm.blockstore(), &act).map_err(|e| e.to_string())?;
 
-        let cm = make_map_with_root::<_, power::Claim>(&spast.claims, sm.blockstore())?;
+        state
+            .miner_power(sm.blockstore(), maddr)
+            .map_err(|e| e.to_string())?
+            .ok_or("miner isn't valid: doesn't exist")?;
 
-        if cm.contains_key(&maddr.to_bytes())? {
-            Ok(())
-        } else {
-            Err(Error::Validation(
-                "Miner isn't valid from power state".to_string(),
-            ))
-        }
+        Ok(())
     }
 }
 
 /// Helper function to verify VRF proofs.
 fn verify_election_post_vrf(worker: &Address, rand: &[u8], evrf: &[u8]) -> Result<(), String> {
-    // TODO allow for insecure post validation to skip checks
     crypto::verify_vrf(worker, rand, evrf)
 }
 
@@ -970,50 +1004,18 @@ fn block_sanity_checks(header: &BlockHeader) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Returns message root CID from bls and secp message contained in the param Block
-pub fn compute_msg_meta<DB: BlockStore>(
-    blockstore: &DB,
-    bls_msgs: &[UnsignedMessage],
-    secp_msgs: &[SignedMessage],
-) -> Result<Cid, Error> {
-    // collect bls and secp cids
-    let bls_cids = cids_from_messages(bls_msgs)?;
-    let secp_cids = cids_from_messages(secp_msgs)?;
-
-    // generate Amt and batch set message values
-    // TODO avoid having to clone all cids (from iter function on Amt)
-    let bls_root = Amt::new_from_slice(blockstore, &bls_cids)?;
-    let secp_root = Amt::new_from_slice(blockstore, &secp_cids)?;
-
-    let meta = TxMeta {
-        bls_message_root: bls_root,
-        secp_message_root: secp_root,
-    };
-
-    // store message roots and receive meta_root cid
-    let meta_root = blockstore
-        .put(&meta, Blake2b256)
-        .map_err(|e| Error::Other(e.to_string()))?;
-
-    Ok(meta_root)
-}
-
-fn cids_from_messages<T: Cbor>(messages: &[T]) -> Result<Vec<Cid>, EncodingError> {
-    messages.iter().map(Cbor::cid).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_std::sync::channel;
-    use beacon::MockBeacon;
+    use async_std::channel::bounded;
+    use beacon::{BeaconPoint, MockBeacon};
     use db::MemoryDB;
     use fil_types::verifier::MockVerifier;
     use forest_libp2p::NetworkMessage;
     use libp2p::PeerId;
     use std::sync::Arc;
     use std::time::Duration;
-    use test_utils::{construct_blocksync_response, construct_dummy_header, construct_tipset};
+    use test_utils::{construct_chain_exchange_response, construct_dummy_header, construct_tipset};
 
     fn sync_worker_setup(
         db: Arc<MemoryDB>,
@@ -1023,38 +1025,41 @@ mod tests {
     ) {
         let chain_store = Arc::new(ChainStore::new(db.clone()));
 
-        let (local_sender, test_receiver) = channel(20);
+        let (local_sender, test_receiver) = bounded(20);
 
         let gen = construct_dummy_header();
         chain_store.set_genesis(&gen).unwrap();
 
-        let beacon = Arc::new(MockBeacon::new(Duration::from_secs(1)));
+        let beacon = Arc::new(BeaconSchedule(vec![BeaconPoint {
+            height: 0,
+            beacon: Arc::new(MockBeacon::new(Duration::from_secs(1))),
+        }]));
 
         let genesis_ts = Arc::new(Tipset::new(vec![gen]).unwrap());
         (
             SyncWorker {
                 state: Default::default(),
                 beacon,
-                state_manager: Arc::new(StateManager::new(db)),
-                chain_store,
-                network: SyncNetworkContext::new(local_sender, Default::default()),
+                state_manager: Arc::new(StateManager::new(chain_store)),
+                network: SyncNetworkContext::new(local_sender, Default::default(), db),
                 genesis: genesis_ts,
                 bad_blocks: Default::default(),
                 verifier: Default::default(),
+                req_window: 200,
             },
             test_receiver,
         )
     }
 
-    fn send_blocksync_response(blocksync_message: Receiver<NetworkMessage>) {
-        let rpc_response = construct_blocksync_response();
+    fn send_chain_exchange_response(chain_exchange_message: Receiver<NetworkMessage>) {
+        let rpc_response = construct_chain_exchange_response();
 
         task::block_on(async {
-            match blocksync_message.recv().await.unwrap() {
-                NetworkMessage::BlockSyncRequest {
+            match chain_exchange_message.recv().await.unwrap() {
+                NetworkMessage::ChainExchangeRequest {
                     response_channel, ..
                 } => {
-                    response_channel.send(rpc_response).unwrap();
+                    response_channel.send(Ok(rpc_response)).unwrap();
                 }
                 _ => unreachable!(),
             }
@@ -1074,14 +1079,13 @@ mod tests {
         task::block_on(async move {
             sw.network
                 .peer_manager()
-                .update_peer_head(source.clone(), Some(head.clone()))
+                .update_peer_head(source.clone(), head.clone())
                 .await;
             assert_eq!(sw.network.peer_manager().len().await, 1);
-            // make blocksync request
-            let return_set =
-                task::spawn(async move { sw.sync_headers_reverse((*head).clone(), &to).await });
-            // send blocksync response to channel
-            send_blocksync_response(network_receiver);
+            // make chain_exchange request
+            let return_set = task::spawn(async move { sw.sync_headers_reverse(head, &to).await });
+            // send chain_exchange response to channel
+            send_chain_exchange_response(network_receiver);
             assert_eq!(return_set.await.unwrap().len(), 4);
         });
     }

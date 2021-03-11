@@ -5,24 +5,25 @@ authors = ["ChainSafe Systems <info@chainsafe.io>"]
 edition = "2018"
 
 [dependencies]
-async-std = "1.6.0"
-actor = { path = "../vm/actor" }
+async-std = "1.9.0"
+actor = { package = "actor_interface", path = "../vm/actor_interface" }
+
 address = { package = "forest_address", path = "../vm/address" }
-encoding = { package = "forest_encoding", path = "../encoding", version = "0.1" }
+encoding = { package = "forest_encoding", version = "0.2.1" }
 thiserror = "1.0.20"
 serde = { version = "1.0", features = ["derive"] }
 state_manager = { package = "state_manager", path = "../blockchain/state_manager" }
-blockstore = { package = "ipld_blockstore", path = "../ipld/blockstore/" }
-cid = { package = "forest_cid", path = "../ipld/cid" }
+blockstore = { package = "ipld_blockstore", version = "0.1" }
+cid = { package = "forest_cid", version = "0.3", features = ["cbor"] }
 num-bigint = { path = "../utils/bigint", package = "forest_bigint" }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 log = "0.4.8"
 derive_builder = "0.9"
 flo_stream = "0.4.0"
 chain = { path = "../blockchain/chain"}
-message = { package = "forest_message", path = "../vm/message" }
+message = { package = "forest_message", version = "0.6" }
 futures = "0.3.5"
-ipld_amt = { path = "../ipld/amt/" }
+ipld_amt = "0.2"
 message_pool = { path = "../blockchain/message_pool/" }
 wallet = { package = "key_management", path = "../key_management/", features = ["json"] }
 num-traits = "0.2"

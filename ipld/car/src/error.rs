@@ -1,7 +1,6 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use cid::multihash::DecodeOwnedError;
 use thiserror::Error;
 
 /// Car utility error
@@ -11,6 +10,10 @@ pub enum Error {
     ParsingError(String),
     #[error("Invalid CAR file: {0}")]
     InvalidFile(String),
+    #[error("Io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Cbor encoding error: {0}")]
+    Cbor(#[from] forest_encoding::error::Error),
     #[error("CAR error: {0}")]
     Other(String),
 }
@@ -21,8 +24,8 @@ impl From<cid::Error> for Error {
     }
 }
 
-impl From<DecodeOwnedError> for Error {
-    fn from(err: DecodeOwnedError) -> Error {
+impl From<cid::multihash::Error> for Error {
+    fn from(err: cid::multihash::Error) -> Error {
         Error::ParsingError(err.to_string())
     }
 }

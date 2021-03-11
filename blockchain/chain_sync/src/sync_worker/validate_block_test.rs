@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use super::*;
-use actor::EPOCH_DURATION_SECONDS;
 use async_std::task;
-use beacon::{DrandBeacon, DrandPublic};
-use chain::tipset_from_keys;
 use clock::ChainEpoch;
 use db::MemoryDB;
 use fil_types::verifier::FullVerifier;
@@ -24,35 +21,32 @@ async fn validate_specific_block() {
 
     let db = Arc::new(MemoryDB::default());
 
-    let cids = load_car(db.as_ref(), EXPORT_SR_40.as_ref()).unwrap();
+    let cids = load_car(db.as_ref(), EXPORT_SR_40.as_ref()).await.unwrap();
 
-    let mut chain_store = ChainStore::new(db.clone());
-    let state_manager = Arc::new(StateManager::new(db));
+    let chain_store = Arc::new(ChainStore::new(db.clone()));
+    let state_manager = Arc::new(StateManager::new(chain_store.clone()));
 
     // Initialize genesis using default (currently space-race) genesis
-    let (genesis, _) = initialize_genesis(None, &mut chain_store, &state_manager).unwrap();
-    let chain_store = Arc::new(chain_store);
+    let (genesis, _) = initialize_genesis(None, &state_manager).await.unwrap();
     let genesis = Arc::new(genesis);
 
-    let beacon = Arc::new(DrandBeacon::new(
-        "https://pl-us.incentinet.drand.sh",
-        DrandPublic{coefficient: hex::decode("8cad0c72c606ab27d36ee06de1d5b2db1faf92e447025ca37575ab3a8aac2eaae83192f846fc9e158bc738423753d000").unwrap()},
-        genesis.blocks()[0].timestamp(),
-        EPOCH_DURATION_SECONDS as u64,
-    )
-    .await
-    .unwrap());
+    let beacon = Arc::new(
+        networks::beacon_schedule_default(genesis.min_timestamp())
+            .await
+            .unwrap(),
+    );
 
-    let mut ts = tipset_from_keys(chain_store.blockstore(), &TipsetKeys::new(cids)).unwrap();
+    let mut ts = chain_store
+        .tipset_from_keys(&TipsetKeys::new(cids))
+        .await
+        .unwrap();
     while ts.epoch() > TEST_NUM {
-        ts = chain_store.tipset_from_keys(ts.parents()).unwrap();
+        ts = chain_store.tipset_from_keys(ts.parents()).await.unwrap();
     }
 
-    let fts = chain_store.fill_tipset(ts).unwrap();
+    let fts = chain_store.fill_tipset(&ts).unwrap();
     for block in fts.into_blocks() {
-        println!("new block");
         task::block_on(SyncWorker::<_, _, FullVerifier>::validate_block(
-            chain_store.clone(),
             state_manager.clone(),
             beacon.clone(),
             Arc::new(block),

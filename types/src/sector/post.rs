@@ -5,6 +5,7 @@ use crate::{ActorID, Randomness, RegisteredPoStProof, RegisteredSealProof, Secto
 use cid::Cid;
 use encoding::{serde_bytes, tuple::*};
 
+/// Randomness type used for generating PoSt proof randomness.
 pub type PoStRandomness = Randomness;
 
 /// Information about a sector necessary for PoSt verification
@@ -16,7 +17,7 @@ pub struct SectorInfo {
     pub sealed_cid: Cid,
 }
 
-// TODO docs
+/// Proof of spacetime data stored on chain.
 #[derive(Debug, PartialEq, Clone, Eq, Serialize_tuple, Deserialize_tuple)]
 pub struct PoStProof {
     pub post_proof: RegisteredPoStProof,
@@ -64,6 +65,27 @@ pub mod json {
     #[derive(Serialize)]
     #[serde(transparent)]
     pub struct PoStProofJsonRef<'a>(#[serde(with = "self")] pub &'a PoStProof);
+
+    #[derive(Clone, Serialize, Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct SectorInfoJson {
+        #[serde(rename = "SealProof")]
+        pub proof: RegisteredSealProof,
+        pub sector_number: SectorNumber,
+        #[serde(with = "cid::json")]
+        #[serde(rename = "SealedCID")]
+        pub sealed_cid: Cid,
+    }
+
+    impl From<SectorInfo> for SectorInfoJson {
+        fn from(sector: SectorInfo) -> Self {
+            Self {
+                proof: sector.proof,
+                sector_number: sector.sector_number,
+                sealed_cid: sector.sealed_cid,
+            }
+        }
+    }
 
     impl From<PoStProofJson> for PoStProof {
         fn from(wrapper: PoStProofJson) -> Self {

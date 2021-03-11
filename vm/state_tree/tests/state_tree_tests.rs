@@ -1,15 +1,21 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use actor::{init, ActorState, ACCOUNT_ACTOR_CODE_ID, INIT_ACTOR_ADDR};
+use actor::actorv0::{
+    init, ActorState, ACCOUNT_ACTOR_CODE_ID, INIT_ACTOR_ADDR, INIT_ACTOR_CODE_ID,
+};
 use address::{Address, SECP_PUB_LEN};
-use cid::{multihash::Identity, Cid};
+use cid::{
+    Cid,
+    Code::{Blake2b256, Identity},
+};
+use fil_types::StateTreeVersion;
 use ipld_blockstore::BlockStore;
 use ipld_hamt::Hamt;
 use state_tree::*;
 
 fn empty_cid() -> Cid {
-    Cid::new_from_cbor(&[], Identity)
+    cid::new_from_cbor(&[], Identity)
 }
 
 #[test]
@@ -18,7 +24,7 @@ fn get_set_cache() {
     let act_a = ActorState::new(empty_cid(), empty_cid(), Default::default(), 2);
     let addr = Address::new_id(1);
     let store = db::MemoryDB::default();
-    let mut tree = StateTree::new(&store);
+    let mut tree = StateTree::new(&store, StateTreeVersion::V0).unwrap();
 
     // test address not in cache
     assert_eq!(tree.get_actor(&addr).unwrap(), None);
@@ -35,7 +41,7 @@ fn get_set_cache() {
 #[test]
 fn delete_actor() {
     let store = db::MemoryDB::default();
-    let mut tree = StateTree::new(&store);
+    let mut tree = StateTree::new(&store, StateTreeVersion::V0).unwrap();
 
     let addr = Address::new_id(3);
     let act_s = ActorState::new(empty_cid(), empty_cid(), Default::default(), 1);
@@ -48,7 +54,7 @@ fn delete_actor() {
 #[test]
 fn get_set_non_id() {
     let store = db::MemoryDB::default();
-    let mut tree = StateTree::new(&store);
+    let mut tree = StateTree::new(&store, StateTreeVersion::V0).unwrap();
 
     // Empty hamt Cid used for testing
     let e_cid = Hamt::<_, String>::new_with_bit_width(&store, 5)
@@ -58,11 +64,16 @@ fn get_set_non_id() {
     let init_state = init::State::new(e_cid.clone(), "test".to_owned());
     let state_cid = tree
         .store()
-        .put(&init_state, Identity)
+        .put(&init_state, Blake2b256)
         .map_err(|e| e.to_string())
         .unwrap();
 
-    let act_s = ActorState::new(empty_cid(), state_cid.clone(), Default::default(), 1);
+    let act_s = ActorState::new(
+        *INIT_ACTOR_CODE_ID,
+        state_cid.clone(),
+        Default::default(),
+        1,
+    );
 
     tree.snapshot().unwrap();
     tree.set_actor(&INIT_ACTOR_ADDR, act_s.clone()).unwrap();
@@ -77,7 +88,7 @@ fn get_set_non_id() {
     assert_eq!(
         new_init_s,
         Some(ActorState {
-            code: empty_cid(),
+            code: *INIT_ACTOR_CODE_ID,
             state: state_cid,
             balance: Default::default(),
             sequence: 2
@@ -94,7 +105,7 @@ fn get_set_non_id() {
 #[test]
 fn test_snapshots() {
     let store = db::MemoryDB::default();
-    let mut tree = StateTree::new(&store);
+    let mut tree = StateTree::new(&store, StateTreeVersion::V0).unwrap();
     let mut addresses: Vec<Address> = Vec::new();
     use num_bigint::BigInt;
 
@@ -171,7 +182,7 @@ fn test_snapshots() {
 #[test]
 fn revert_snapshot() {
     let store = db::MemoryDB::default();
-    let mut tree = StateTree::new(&store);
+    let mut tree = StateTree::new(&store, StateTreeVersion::V0).unwrap();
     use num_bigint::BigInt;
 
     let addr_str = "f01";

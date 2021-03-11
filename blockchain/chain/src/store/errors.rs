@@ -6,10 +6,11 @@ use cid::Error as CidErr;
 use db::Error as DbErr;
 use encoding::{error::Error as SerdeErr, Error as EncErr};
 use ipld_amt::Error as AmtErr;
+use std::error::Error as StdError;
 use thiserror::Error;
 
 /// Chain error
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error)]
 pub enum Error {
     /// Key was not found
     #[error("Invalid tipset: {0}")]
@@ -61,5 +62,11 @@ impl From<AmtErr> for Error {
 impl From<String> for Error {
     fn from(e: String) -> Self {
         Error::Other(e)
+    }
+}
+
+impl From<Box<dyn StdError>> for Error {
+    fn from(e: Box<dyn StdError>) -> Self {
+        Error::Other(e.to_string())
     }
 }

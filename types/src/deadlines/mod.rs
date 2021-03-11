@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 
 /// Deadline calculations with respect to a current epoch.
 /// "Deadline" refers to the window during which proofs may be submitted.
-/// Windows are non-overlapping ranges [Open, Close), but the challenge epoch for a window occurs before
-/// the window opens.
+/// Windows are non-overlapping ranges [Open, Close), but the challenge epoch for a window occurs
+/// before the window opens.
 #[derive(Default, Debug, Serialize, Deserialize, PartialEq, Copy, Clone)]
+#[serde(rename_all = "PascalCase")]
 pub struct DeadlineInfo {
     /// Epoch at which this info was calculated.
     pub current_epoch: ChainEpoch,
@@ -29,9 +30,13 @@ pub struct DeadlineInfo {
     pub fault_cutoff: ChainEpoch,
 
     // Protocol parameters (This is intentionally included in the JSON response for deadlines)
+    #[serde(rename = "WPoStPeriodDeadlines")]
     w_post_period_deadlines: u64,
+    #[serde(rename = "WPoStProvingPeriod")]
     w_post_proving_period: ChainEpoch,
+    #[serde(rename = "WPoStChallengeWindow")]
     w_post_challenge_window: ChainEpoch,
+    #[serde(rename = "WPoStChallengeLookback")]
     w_post_challenge_lookback: ChainEpoch,
     fault_declaration_cutoff: ChainEpoch,
 }

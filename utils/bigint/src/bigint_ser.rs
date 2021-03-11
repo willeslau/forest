@@ -3,6 +3,7 @@
 
 use num_bigint::{BigInt, Sign};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 /// Wrapper for serializing big ints to match filecoin spec. Serializes as bytes.
 #[derive(Serialize)]
@@ -10,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub struct BigIntSer<'a>(#[serde(with = "self")] pub &'a BigInt);
 
 /// Wrapper for deserializing as BigInt from bytes.
-#[derive(Deserialize, Serialize, Clone, Default)]
+#[derive(Deserialize, Serialize, Clone, Default, PartialEq)]
 #[serde(transparent)]
 pub struct BigIntDe(#[serde(with = "self")] pub BigInt);
 
@@ -37,7 +38,7 @@ pub fn deserialize<'de, D>(deserializer: D) -> Result<BigInt, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    let bz: &[u8] = serde_bytes::Deserialize::deserialize(deserializer)?;
+    let bz: Cow<'de, [u8]> = serde_bytes::Deserialize::deserialize(deserializer)?;
     if bz.is_empty() {
         return Ok(BigInt::default());
     }
@@ -74,5 +75,30 @@ pub mod json {
     {
         let s = String::deserialize(deserializer)?;
         BigInt::from_str(&s).map_err(serde::de::Error::custom)
+    }
+
+    pub mod opt {
+        use super::*;
+        use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+
+        pub fn serialize<S>(v: &Option<BigInt>, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            v.as_ref().map(|s| s.to_string()).serialize(serializer)
+        }
+
+        pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<BigInt>, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            let s: Option<String> = Deserialize::deserialize(deserializer)?;
+            if let Some(v) = s {
+                return Ok(Some(
+                    BigInt::from_str(&v).map_err(serde::de::Error::custom)?,
+                ));
+            }
+            Ok(None)
+        }
     }
 }

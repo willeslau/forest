@@ -7,7 +7,7 @@ mod types;
 pub use self::state::State;
 pub use self::types::*;
 use crate::{
-    make_map, ActorDowncast, MINER_ACTOR_CODE_ID, MULTISIG_ACTOR_CODE_ID, PAYCH_ACTOR_CODE_ID,
+    ActorDowncast, MINER_ACTOR_CODE_ID, MULTISIG_ACTOR_CODE_ID, PAYCH_ACTOR_CODE_ID,
     POWER_ACTOR_CODE_ID, SYSTEM_ACTOR_ADDR,
 };
 use address::Address;
@@ -18,7 +18,7 @@ use num_traits::FromPrimitive;
 use runtime::{ActorCode, Runtime};
 use vm::{actor_error, ActorError, ExitCode, MethodNum, Serialized, METHOD_CONSTRUCTOR};
 
-// * Updated to specs-actors commit: 17d3c602059e5c48407fb3c34343da87e6ea6586 (v0.9.12)
+// * Updated to specs-actors commit: 999e57a151cc7ada020ca2844b651499ab8c0dec (v3.0.1)
 
 /// Init actor methods available
 #[derive(FromPrimitive)]
@@ -39,12 +39,14 @@ impl Actor {
     {
         let sys_ref: &Address = &SYSTEM_ACTOR_ADDR;
         rt.validate_immediate_caller_is(std::iter::once(sys_ref))?;
-        let mut empty_map = make_map::<_, ()>(rt.store());
-        let root = empty_map.flush().map_err(|err| {
-            err.downcast_default(ExitCode::ErrIllegalState, "failed to construct state")
+        let state = State::new(rt.store(), params.network_name).map_err(|e| {
+            e.downcast_default(
+                ExitCode::ErrIllegalState,
+                "failed to construct init actor state",
+            )
         })?;
 
-        rt.create(&State::new(root, params.network_name))?;
+        rt.create(&state)?;
 
         Ok(())
     }
@@ -58,7 +60,13 @@ impl Actor {
         rt.validate_immediate_caller_accept_any()?;
         let caller_code = rt
             .get_actor_code_cid(rt.message().caller())?
-            .ok_or_else(|| actor_error!(fatal("No code for actor at {}", rt.message().caller())))?;
+            .ok_or_else(|| {
+                actor_error!(
+                    ErrIllegalState,
+                    "no code for caller as {}",
+                    rt.message().caller()
+                )
+            })?;
         if !can_exec(&caller_code, &params.code_cid) {
             return Err(actor_error!(ErrForbidden;
                     "called type {} cannot exec actor type {}",
@@ -112,11 +120,11 @@ impl ActorCode for Actor {
     {
         match FromPrimitive::from_u64(method) {
             Some(Method::Constructor) => {
-                Self::constructor(rt, params.deserialize()?)?;
+                Self::constructor(rt, rt.deserialize_params(params)?)?;
                 Ok(Serialized::default())
             }
             Some(Method::Exec) => {
-                let res = Self::exec(rt, params.deserialize()?)?;
+                let res = Self::exec(rt, rt.deserialize_params(params)?)?;
                 Ok(Serialized::serialize(res)?)
             }
             None => Err(actor_error!(SysErrInvalidMethod; "Invalid method")),

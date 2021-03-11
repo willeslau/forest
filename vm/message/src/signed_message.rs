@@ -8,7 +8,7 @@ use encoding::tuple::*;
 use encoding::{to_vec, Cbor, Error};
 use vm::{MethodNum, Serialized, TokenAmount};
 
-/// Represents a wrapped message with signature bytes
+/// Represents a wrapped message with signature bytes.
 #[derive(PartialEq, Clone, Debug, Serialize_tuple, Deserialize_tuple, Hash, Eq)]
 pub struct SignedMessage {
     pub message: UnsignedMessage,
@@ -25,7 +25,7 @@ impl SignedMessage {
         Ok(SignedMessage { message, signature })
     }
 
-    /// Generate a new signed message from fields
+    /// Generate a new signed message from fields.
     pub fn new_from_parts(
         message: UnsignedMessage,
         signature: Signature,
@@ -44,7 +44,7 @@ impl SignedMessage {
         &self.signature
     }
 
-    /// Consumes self and returns it's unsigned message
+    /// Consumes self and returns it's unsigned message.
     pub fn into_message(self) -> UnsignedMessage {
         self.message
     }
@@ -127,8 +127,9 @@ impl Cbor for SignedMessage {
 pub mod json {
     use super::*;
     use crate::unsigned_message;
+    use cid::Cid;
     use crypto::signature;
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use serde::{ser, Deserialize, Deserializer, Serialize, Serializer};
 
     /// Wrapper for serializing and deserializing a SignedMessage from JSON.
     #[derive(Deserialize, Serialize)]
@@ -146,6 +147,12 @@ pub mod json {
         }
     }
 
+    impl From<SignedMessage> for SignedMessageJson {
+        fn from(msg: SignedMessage) -> Self {
+            SignedMessageJson(msg)
+        }
+    }
+
     pub fn serialize<S>(m: &SignedMessage, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -157,10 +164,13 @@ pub mod json {
             message: &'a UnsignedMessage,
             #[serde(with = "signature::json")]
             signature: &'a Signature,
+            #[serde(default, rename = "CID", with = "cid::json::opt")]
+            cid: Option<Cid>,
         }
         SignedMessageSer {
             message: &m.message,
             signature: &m.signature,
+            cid: Some(m.cid().map_err(ser::Error::custom)?),
         }
         .serialize(serializer)
     }

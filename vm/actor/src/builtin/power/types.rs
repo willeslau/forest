@@ -1,11 +1,11 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use crate::{smooth::FilterEstimate, DealWeight};
+use crate::smooth::FilterEstimate;
 use address::Address;
 use clock::ChainEpoch;
 use encoding::{serde_bytes, tuple::*, BytesDe, Cbor};
-use fil_types::{RegisteredSealProof, SectorSize, StoragePower};
+use fil_types::{RegisteredPoStProof, StoragePower};
 use num_bigint::bigint_ser;
 use vm::{Serialized, TokenAmount};
 
@@ -18,11 +18,15 @@ pub const SECTOR_TERMINATION_MANUAL: SectorTermination = 1;
 /// Implicit termination due to unrecovered fault
 pub const SECTOR_TERMINATION_FAULTY: SectorTermination = 3;
 
+pub const CRON_QUEUE_HAMT_BITWIDTH: u32 = 6;
+pub const CRON_QUEUE_AMT_BITWIDTH: usize = 6;
+pub const PROOF_VALIDATION_BATCH_AMT_BITWIDTH: usize = 4;
+
 #[derive(Serialize_tuple, Deserialize_tuple)]
 pub struct CreateMinerParams {
     pub owner: Address,
     pub worker: Address,
-    pub seal_proof_type: RegisteredSealProof,
+    pub window_post_proof_type: RegisteredPoStProof,
     #[serde(with = "serde_bytes")]
     pub peer: Vec<u8>,
     pub multiaddrs: Vec<BytesDe>,
@@ -49,23 +53,6 @@ pub struct UpdateClaimedPowerParams {
 pub struct EnrollCronEventParams {
     pub event_epoch: ChainEpoch,
     pub payload: Serialized,
-}
-
-#[derive(Clone, Serialize_tuple, Deserialize_tuple)]
-pub struct SectorStorageWeightDesc {
-    pub sector_size: SectorSize,
-    pub duration: ChainEpoch,
-    #[serde(with = "bigint_ser")]
-    pub deal_weight: DealWeight,
-    #[serde(with = "bigint_ser")]
-    pub verified_deal_weight: DealWeight,
-}
-
-#[derive(Serialize_tuple, Deserialize_tuple)]
-pub struct ReportConsensusFaultParams {
-    pub block_header_1: Serialized,
-    pub block_header_2: Serialized,
-    pub block_header_extra: Serialized,
 }
 
 #[derive(Serialize_tuple, Deserialize_tuple)]

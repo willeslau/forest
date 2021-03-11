@@ -1,40 +1,57 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
+use super::mpool_api::MessageSendSpec;
 use crate::RpcState;
-use address::Address;
-use blocks::TipsetKeys;
+use address::json::AddressJson;
+use beacon::Beacon;
+use blocks::{tipset_keys_json::TipsetKeysJson, TipsetKeys};
 use blockstore::BlockStore;
 use chain::{BASE_FEE_MAX_CHANGE_DENOM, BLOCK_GAS_TARGET, MINIMUM_BASE_FEE};
-use fil_types::{verifier::FullVerifier, BLOCK_GAS_LIMIT};
+use fil_types::{verifier::ProofVerifier, BLOCK_GAS_LIMIT};
 use jsonrpc_v2::{Data, Error as JsonRpcError, Params};
-use message::unsigned_message::json::UnsignedMessageJson;
+use message::{unsigned_message::json::UnsignedMessageJson, UnsignedMessage};
 use message::{ChainMessage, Message};
 use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Zero};
 use rand_distr::{Distribution, Normal};
 use wallet::KeyStore;
 const MIN_GAS_PREMIUM: f64 = 100000.0;
-const MAX_SPEND_ON_FEE_DENOM: i64 = 100;
 
 /// Estimate the fee cap
-pub(crate) async fn gas_estimate_fee_cap<DB, KS>(
-    data: Data<RpcState<DB, KS>>,
-    Params(params): Params<(UnsignedMessageJson, i64, TipsetKeys)>,
+pub(crate) async fn gas_estimate_fee_cap<DB, KS, B>(
+    data: Data<RpcState<DB, KS, B>>,
+    Params(params): Params<(UnsignedMessageJson, i64, TipsetKeysJson)>,
 ) -> Result<String, JsonRpcError>
 where
     DB: BlockStore + Send + Sync + 'static,
     KS: KeyStore + Send + Sync + 'static,
+    B: Beacon + Send + Sync + 'static,
 {
-    let (UnsignedMessageJson(msg), max_queue_blks, _tsk) = params;
+    let (UnsignedMessageJson(msg), max_queue_blks, TipsetKeysJson(tsk)) = params;
 
-    let ts = chain::get_heaviest_tipset(data.state_manager.blockstore())?
-        .ok_or("can't find heaviest tipset")?;
+    estimate_fee_cap::<DB, KS, B>(&data, msg, max_queue_blks, tsk)
+        .await
+        .map(|n| BigInt::to_string(&n))
+}
 
-    let act = data
+async fn estimate_fee_cap<DB, KS, B>(
+    data: &Data<RpcState<DB, KS, B>>,
+    msg: UnsignedMessage,
+    max_queue_blks: i64,
+    _tsk: TipsetKeys,
+) -> Result<BigInt, JsonRpcError>
+where
+    DB: BlockStore + Send + Sync + 'static,
+    KS: KeyStore + Send + Sync + 'static,
+    B: Beacon + Send + Sync + 'static,
+{
+    let ts = data
         .state_manager
-        .get_actor(msg.from(), ts.parent_state())?
-        .ok_or("could not load actor")?;
+        .chain_store()
+        .heaviest_tipset()
+        .await
+        .ok_or("can't find heaviest tipset")?;
 
     let parent_base_fee = ts.blocks()[0].parent_base_fee();
     let increase_factor =
@@ -43,31 +60,36 @@ where
     let fee_in_future = parent_base_fee
         * BigInt::from_f64(increase_factor * (1 << 8) as f64)
             .ok_or("failed to convert fee_in_future f64 to bigint")?;
-    let fee_in_future = fee_in_future / (1 << 8);
-
-    let gas_limit_big: BigInt = msg.gas_limit().into();
-    let max_accepted = act.balance / MAX_SPEND_ON_FEE_DENOM;
-    let expected_fee = &fee_in_future * &gas_limit_big;
-
-    let out = if expected_fee > max_accepted {
-        max_accepted / gas_limit_big
-    } else {
-        fee_in_future
-    };
-    Ok(out.to_string())
+    let mut out = fee_in_future / (1 << 8);
+    out += msg.gas_premium();
+    Ok(out)
 }
 
 /// Estimate the fee cap
-pub(crate) async fn gas_estimate_gas_premium<DB, KS>(
-    data: Data<RpcState<DB, KS>>,
-    Params(params): Params<(u64, Address, i64, TipsetKeys)>,
+pub(crate) async fn gas_estimate_gas_premium<DB, KS, B>(
+    data: Data<RpcState<DB, KS, B>>,
+    Params(params): Params<(u64, AddressJson, i64, TipsetKeysJson)>,
 ) -> Result<String, JsonRpcError>
 where
     DB: BlockStore + Send + Sync + 'static,
     KS: KeyStore + Send + Sync + 'static,
+    B: Beacon + Send + Sync + 'static,
 {
-    let (mut nblocksincl, _sender, _gas_limit, _) = params;
+    let (nblocksincl, AddressJson(_sender), _gas_limit, TipsetKeysJson(_tsk)) = params;
+    estimate_gas_premium::<DB, KS, B>(&data, nblocksincl)
+        .await
+        .map(|n| BigInt::to_string(&n))
+}
 
+async fn estimate_gas_premium<DB, KS, B>(
+    data: &Data<RpcState<DB, KS, B>>,
+    mut nblocksincl: u64,
+) -> Result<BigInt, JsonRpcError>
+where
+    DB: BlockStore + Send + Sync + 'static,
+    KS: KeyStore + Send + Sync + 'static,
+    B: Beacon + Send + Sync + 'static,
+{
     if nblocksincl == 0 {
         nblocksincl = 1;
     }
@@ -80,14 +102,22 @@ where
     let mut prices: Vec<GasMeta> = Vec::new();
     let mut blocks = 0;
 
-    let mut ts = chain::get_heaviest_tipset(data.state_manager.blockstore())?
+    let mut ts = data
+        .state_manager
+        .chain_store()
+        .heaviest_tipset()
+        .await
         .ok_or("cant get heaviest tipset")?;
 
     for _ in 0..(nblocksincl * 2) {
-        if ts.parents().cids().is_empty() {
+        if ts.epoch() == 0 {
             break;
         }
-        let pts = chain::tipset_from_keys(data.state_manager.blockstore(), ts.parents())?;
+        let pts = data
+            .state_manager
+            .chain_store()
+            .tipset_from_keys(ts.parents())
+            .await?;
         blocks += pts.blocks().len();
         let msgs = chain::messages_for_tipset(data.state_manager.blockstore(), &pts)?;
 
@@ -117,7 +147,7 @@ where
         }
         if prev == 0.into() {
             let ret: BigInt = price.price + 1;
-            return Ok(ret.to_string());
+            return Ok(ret);
         }
         premium = (&price.price + &prev) / 2 + 1
     }
@@ -137,41 +167,64 @@ where
     let noise: f64 = Normal::new(1.0, 0.005)
         .unwrap()
         .sample(&mut rand::thread_rng());
+
     premium *= BigInt::from_f64(noise * (1 << precision) as f64)
         .ok_or("failed to converrt gas premium f64 to bigint")?;
     premium /= 1 << precision;
 
-    Ok(premium.to_string())
+    Ok(premium)
 }
 
 /// Estimate the gas limit
-pub(crate) async fn gas_estimate_gas_limit<DB, KS>(
-    data: Data<RpcState<DB, KS>>,
-    Params(params): Params<(UnsignedMessageJson, TipsetKeys)>,
+pub(crate) async fn gas_estimate_gas_limit<DB, KS, B, V>(
+    data: Data<RpcState<DB, KS, B>>,
+    Params(params): Params<(UnsignedMessageJson, TipsetKeysJson)>,
 ) -> Result<i64, JsonRpcError>
 where
     DB: BlockStore + Send + Sync + 'static,
     KS: KeyStore + Send + Sync + 'static,
+    B: Beacon + Send + Sync + 'static,
+    V: ProofVerifier + Send + Sync + 'static,
 {
-    let (UnsignedMessageJson(mut msg), _) = params;
+    let (UnsignedMessageJson(msg), TipsetKeysJson(tsk)) = params;
+    estimate_gas_limit::<DB, KS, B, V>(&data, msg, tsk).await
+}
+
+async fn estimate_gas_limit<DB, KS, B, V>(
+    data: &Data<RpcState<DB, KS, B>>,
+    msg: UnsignedMessage,
+    _: TipsetKeys,
+) -> Result<i64, JsonRpcError>
+where
+    DB: BlockStore + Send + Sync + 'static,
+    KS: KeyStore + Send + Sync + 'static,
+    B: Beacon + Send + Sync + 'static,
+    V: ProofVerifier + Send + Sync + 'static,
+{
+    let mut msg = msg;
     msg.set_gas_limit(BLOCK_GAS_LIMIT);
     msg.set_gas_fee_cap(MINIMUM_BASE_FEE.clone() + 1);
     msg.set_gas_premium(1.into());
 
-    let curr_ts = chain::get_heaviest_tipset(data.state_manager.blockstore())?
+    let curr_ts = data
+        .state_manager
+        .chain_store()
+        .heaviest_tipset()
+        .await
         .ok_or("cant find the current heaviest tipset")?;
     let from_a = data
         .state_manager
-        .resolve_to_key_addr::<FullVerifier>(msg.from(), &curr_ts)
+        .resolve_to_key_addr::<V>(msg.from(), &curr_ts)
         .await?;
 
     let pending = data.mpool.pending_for(&from_a).await;
     let prior_messages: Vec<ChainMessage> = pending
         .map(|s| s.into_iter().map(ChainMessage::Signed).collect::<Vec<_>>())
         .unwrap_or_default();
+
     let res = data
         .state_manager
-        .call_with_gas::<FullVerifier>(
+        .call_with_gas::<V>(
             &mut ChainMessage::Unsigned(msg),
             &prior_messages,
             Some(data.mpool.cur_tipset.as_ref().read().await.clone()),
@@ -182,8 +235,56 @@ where
             if rct.exit_code as u64 != 0 {
                 return Ok(-1);
             }
-            Ok(rct.gas_used)
+            // TODO: Figure out why we always under estimate the gas calculation so we dont need to add 200000
+            // https://github.com/ChainSafe/forest/issues/901
+            Ok(rct.gas_used + 200000)
         }
         None => Ok(-1),
     }
+}
+
+/// Estimates the gas paramaters for a given message
+pub(crate) async fn gas_estimate_message_gas<DB, KS, B, V>(
+    data: Data<RpcState<DB, KS, B>>,
+    Params(params): Params<(UnsignedMessageJson, Option<MessageSendSpec>, TipsetKeysJson)>,
+) -> Result<UnsignedMessageJson, JsonRpcError>
+where
+    DB: BlockStore + Send + Sync + 'static,
+    KS: KeyStore + Send + Sync + 'static,
+    B: Beacon + Send + Sync + 'static,
+    V: ProofVerifier + Send + Sync + 'static,
+{
+    let (UnsignedMessageJson(msg), spec, TipsetKeysJson(tsk)) = params;
+    estimate_message_gas::<DB, KS, B, V>(&data, msg, spec, tsk)
+        .await
+        .map(UnsignedMessageJson::from)
+}
+
+pub(crate) async fn estimate_message_gas<DB, KS, B, V>(
+    data: &Data<RpcState<DB, KS, B>>,
+    msg: UnsignedMessage,
+    _spec: Option<MessageSendSpec>,
+    tsk: TipsetKeys,
+) -> Result<UnsignedMessage, JsonRpcError>
+where
+    DB: BlockStore + Send + Sync + 'static,
+    KS: KeyStore + Send + Sync + 'static,
+    B: Beacon + Send + Sync + 'static,
+    V: ProofVerifier + Send + Sync + 'static,
+{
+    let mut msg = msg;
+    if msg.gas_limit() == 0 {
+        let gl = estimate_gas_limit::<DB, KS, B, V>(&data, msg.clone(), tsk.clone()).await?;
+        msg.gas_limit = gl;
+    }
+    if msg.gas_premium().is_zero() {
+        let gp = estimate_gas_premium(&data, 10).await?;
+        msg.gas_premium = gp;
+    }
+    if msg.gas_fee_cap().is_zero() {
+        let gfp = estimate_fee_cap(&data, msg.clone(), 20, tsk).await?;
+        msg.gas_fee_cap = gfp;
+    }
+    // TODO: Cap Gas Fee https://github.com/ChainSafe/forest/issues/901
+    Ok(msg)
 }

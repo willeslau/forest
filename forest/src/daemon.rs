@@ -2,22 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use super::cli::{block_until_sigint, Config};
-use actor::EPOCH_DURATION_SECONDS;
-use async_std::sync::RwLock;
-use async_std::task;
+use async_std::{channel::bounded, sync::RwLock, task};
 use auth::{generate_priv_key, JWT_IDENTIFIER};
-use beacon::{DrandBeacon, DEFAULT_DRAND_URL};
-use blocks::TipsetKeys;
 use chain::ChainStore;
 use chain_sync::ChainSyncer;
-use db::RocksDb;
-use encoding::Cbor;
-use fil_types::verifier::{FullVerifier, ProofVerifier};
-use flo_stream::{MessagePublisher, Publisher};
-use forest_car::load_car;
+use fil_types::verifier::FullVerifier;
 use forest_libp2p::{get_keypair, Libp2pService};
-use genesis::initialize_genesis;
-use ipld_blockstore::BlockStore;
+use genesis::{import_chain, initialize_genesis};
 use libp2p::identity::{ed25519, Keypair};
 use log::{debug, info, trace};
 use message_pool::{MessagePool, MpoolConfig, MpoolRpcProvider};
@@ -25,42 +16,9 @@ use paramfetch::{get_params_default, SectorSizeOpt};
 use paych::{Manager, PaychStore, ResourceAccessor, StateAccessor};
 use rpc::{start_rpc, RpcState};
 use state_manager::StateManager;
-use std::fs::File;
-use std::io::BufReader;
-use std::io::Read;
 use std::sync::Arc;
 use utils::write_to_file;
 use wallet::{KeyStore, PersistentKeyStore, Wallet};
-
-/// Number of tasks spawned for sync workers.
-// TODO benchmark and/or add this as a config option. (1 is temporary value to avoid overlap)
-const WORKER_TASKS: usize = 1;
-
-/// Import a chain from a CAR file
-async fn import_chain<V: ProofVerifier, R: Read, DB: BlockStore>(
-    bs: Arc<DB>,
-    reader: R,
-    snapshot: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Importing chain from snapshot");
-    // start import
-    let cids = load_car(bs.as_ref(), reader)?;
-    let ts = chain::tipset_from_keys(bs.as_ref(), &TipsetKeys::new(cids))?;
-    let gb = chain::tipset_by_height(bs.as_ref(), 0, &ts, true)?.unwrap();
-    let sm = StateManager::new(bs.clone());
-    if !snapshot {
-        info!("Validating imported chain");
-        sm.validate_chain::<V>(ts.clone()).await?;
-    }
-    let gen_cid = chain::set_genesis(bs.as_ref(), &gb.blocks()[0])?;
-    bs.write(chain::HEAD_KEY, ts.key().marshal_cbor()?)?;
-    info!(
-        "Accepting {:?} as new head with genesis {:?}",
-        ts.cids(),
-        gen_cid
-    );
-    Ok(())
-}
 
 /// Starts daemon process
 pub(super) async fn start(config: Config) {
@@ -90,91 +48,86 @@ pub(super) async fn start(config: Config) {
     }
     let keystore = Arc::new(RwLock::new(ks.clone()));
 
-    // Initialize database
-    let mut db = RocksDb::new(config.data_dir + "/db");
-    db.open().unwrap();
+    // Initialize database (RocksDb will be default if both features enabled)
+    #[cfg(all(feature = "sled", not(feature = "rocksdb")))]
+    let db = db::sled::SledDb::open(config.data_dir + "/sled").unwrap();
+
+    #[cfg(feature = "rocksdb")]
+    let db = db::rocks::RocksDb::open(config.data_dir + "/db").unwrap();
+
     let db = Arc::new(db);
 
+    // Initialize StateManager
+    let chain_store = Arc::new(ChainStore::new(Arc::clone(&db)));
+    let state_manager = Arc::new(StateManager::new(Arc::clone(&chain_store)));
+
+    let publisher = chain_store.publisher();
+
+    // Read Genesis file
+    // * When snapshot command implemented, this genesis does not need to be initialized
+    let (genesis, network_name) = initialize_genesis(config.genesis_file.as_ref(), &state_manager)
+        .await
+        .unwrap();
+
+    let validate_height = if config.snapshot { None } else { Some(0) };
     // Sync from snapshot
     if let Some(path) = &config.snapshot_path {
-        let file = File::open(path).expect("Snapshot file path not found!");
-        let reader = BufReader::new(file);
-        import_chain::<FullVerifier, _, _>(Arc::clone(&db), reader, false)
+        import_chain::<FullVerifier, _>(&state_manager, path, validate_height, config.skip_load)
             .await
             .unwrap();
     }
-
-    let mut chain_store = ChainStore::new(Arc::clone(&db));
-
-    // Initialize StateManager
-    let state_manager = Arc::new(StateManager::new(Arc::clone(&db)));
-
-    // Read Genesis file
-    let (genesis, network_name) = initialize_genesis(
-        config.genesis_file.as_ref(),
-        &mut chain_store,
-        &state_manager,
-    )
-    .unwrap();
 
     // Fetch and ensure verification keys are downloaded
     get_params_default(SectorSizeOpt::Keys, false)
         .await
         .unwrap();
 
-    // Initialize mpool
-    let publisher = chain_store.publisher();
-    let subscriber = publisher.write().await.subscribe();
-    let provider = MpoolRpcProvider::new(subscriber, Arc::clone(&state_manager));
-    let mpool = Arc::new(
-        MessagePool::new(
-            provider,
-            network_name.clone(),
-            MpoolConfig::load_config(db.as_ref()).unwrap(),
-        )
-        .await
-        .unwrap(),
-    );
-
     // Libp2p service setup
     let p2p_service = Libp2pService::new(
         config.network,
-        Arc::clone(&db),
-        Arc::clone(&mpool),
+        Arc::clone(&chain_store),
         net_keypair,
         &network_name,
     );
     let network_rx = p2p_service.network_receiver();
     let network_send = p2p_service.network_sender();
 
-    // Get Drand Coefficients
-    let coeff = config.drand_public;
+    // Initialize mpool
+    let provider = MpoolRpcProvider::new(publisher.clone(), Arc::clone(&state_manager));
+    let mpool = Arc::new(
+        MessagePool::new(
+            provider,
+            network_name.clone(),
+            network_send.clone(),
+            MpoolConfig::load_config(db.as_ref()).unwrap(),
+        )
+        .await
+        .unwrap(),
+    );
 
-    let beacon = DrandBeacon::new(
-        DEFAULT_DRAND_URL,
-        coeff,
-        genesis.blocks()[0].timestamp(),
-        EPOCH_DURATION_SECONDS as u64,
-    )
-    .await
-    .unwrap();
+    let beacon = Arc::new(
+        networks::beacon_schedule_default(genesis.min_timestamp())
+            .await
+            .unwrap(),
+    );
 
     // Initialize ChainSyncer
-    let chain_store_arc = Arc::new(chain_store);
-    // TODO allow for configuring validation strategy (defaulting to full validation)
-    let chain_syncer = ChainSyncer::<_, _, FullVerifier>::new(
-        chain_store_arc.clone(),
+    let chain_syncer = ChainSyncer::<_, _, FullVerifier, _>::new(
         Arc::clone(&state_manager),
-        Arc::new(beacon),
+        beacon.clone(),
+        Arc::clone(&mpool),
         network_send.clone(),
         network_rx,
         Arc::new(genesis),
+        config.sync,
     )
     .unwrap();
     let bad_blocks = chain_syncer.bad_blocks_cloned();
     let sync_state = chain_syncer.sync_state_cloned();
-    let sync_task = task::spawn(async {
-        chain_syncer.start(WORKER_TASKS).await;
+    let (worker_tx, worker_rx) = bounded(20);
+    let worker_tx_clone = worker_tx.clone();
+    let sync_task = task::spawn(async move {
+        chain_syncer.start(worker_tx_clone, worker_rx).await;
     });
 
     // Start services
@@ -188,7 +141,7 @@ pub(super) async fn start(config: Config) {
         let rpc_listen = format!("127.0.0.1:{}", &config.rpc_port);
         Some(task::spawn(async move {
             info!("JSON RPC Endpoint at {}", &rpc_listen);
-            start_rpc(
+            start_rpc::<_, _, _, FullVerifier>(
                 RpcState {
                     state_manager: sm,
                     keystore: keystore_rpc,
@@ -197,8 +150,10 @@ pub(super) async fn start(config: Config) {
                     sync_state,
                     network_send,
                     network_name,
-                    chain_store: chain_store_arc,
-                    events_pubsub: Arc::new(RwLock::new(Publisher::new(1000))),
+                    beacon,
+                    chain_store,
+                    new_mined_block_tx: worker_tx,
+                    chain_notify_streams: Default::default(),
                 },
                 &rpc_listen,
             )
@@ -245,27 +200,26 @@ pub(super) async fn start(config: Config) {
 }
 
 #[cfg(test)]
+#[cfg(not(any(feature = "interopnet", feature = "devnet")))]
 mod test {
     use super::*;
     use db::MemoryDB;
-    use std::fs::File;
-    use std::io::BufReader;
 
     #[async_std::test]
     async fn import_snapshot_from_file() {
         let db = Arc::new(MemoryDB::default());
-        let file = File::open("test_files/chain4.car").expect("Snapshot file path not found!");
-        let reader = BufReader::new(file);
-        import_chain::<FullVerifier, _, _>(Arc::clone(&db), reader, true)
+        let cs = Arc::new(ChainStore::new(db));
+        let sm = Arc::new(StateManager::new(cs));
+        import_chain::<FullVerifier, _>(&sm, "test_files/chain4.car", None, false)
             .await
             .expect("Failed to import chain");
     }
     #[async_std::test]
     async fn import_chain_from_file() {
         let db = Arc::new(MemoryDB::default());
-        let file = File::open("test_files/chain4.car").expect("Snapshot file path not found!");
-        let reader = BufReader::new(file);
-        import_chain::<FullVerifier, _, _>(Arc::clone(&db), reader, false)
+        let cs = Arc::new(ChainStore::new(db));
+        let sm = Arc::new(StateManager::new(cs));
+        import_chain::<FullVerifier, _>(&sm, "test_files/chain4.car", Some(0), false)
             .await
             .expect("Failed to import chain");
     }

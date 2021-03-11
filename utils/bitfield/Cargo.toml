@@ -1,22 +1,22 @@
 [package]
-name = "bitfield"
+name = "forest_bitfield"
+description = "Bitfield logic for use in Filecoin actors"
 version = "0.1.0"
-authors = [
-    "dignifiedquire <dignifiedquire@users.noreply.github.com>",
-    "ChainSafe Systems <info@chainsafe.io>"
-]
+license = "MIT OR Apache-2.0"
+authors = ["ChainSafe Systems <info@chainsafe.io>"]
 edition = "2018"
+repository = "https://github.com/ChainSafe/forest"
 
 [dependencies]
-unsigned-varint = "0.5"
+unsigned-varint = "0.6"
 serde = { version = "1.0", features = ["derive"] }
-serde_bytes = "0.11.3"
-ahash = "0.4"
+serde_bytes = { package = "cs_serde_bytes", version = "0.12" }
+ahash = "0.6"
+encoding = { package = "forest_encoding", version = "0.2.1" }
 
 [dev-dependencies]
 rand_xorshift = "0.2.0"
 rand = "0.7.3"
-encoding = { package = "forest_encoding", path = "../../encoding/" }
 criterion = "0.3"
 serde_json = "1.0"
 
