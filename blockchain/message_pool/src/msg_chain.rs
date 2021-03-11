@@ -6,6 +6,8 @@ use message::{Message, SignedMessage};
 use num_bigint::BigInt;
 use std::cmp::Ordering;
 use std::f64::EPSILON;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 
 /// Represents a node in the MsgChain.
 #[derive(Clone, Debug)]
@@ -218,16 +220,16 @@ impl MsgChain {
             mc.eff_perf = 0.0;
         }
     }
-    #[allow(dead_code)]
+
     pub(crate) fn cmp_effective(&self, other: &Self) -> Ordering {
         let mc = self.curr();
         let other = other.curr();
-        mc.merged
-            .cmp(&other.merged)
-            .then_with(|| (mc.gas_perf >= 0.0).cmp(&(other.gas_perf >= 0.0)))
-            .then_with(|| approx_cmp(mc.eff_perf, other.eff_perf))
-            .then_with(|| approx_cmp(mc.gas_perf, other.gas_perf))
-            .then_with(|| mc.gas_reward.cmp(&other.gas_reward))
+
+        mc.merged.cmp(&other.merged)
+        .then_with(|| approx_cmp(mc.gas_perf, 0.0).cmp(&approx_cmp(other.gas_perf, 0.0)))
+        .then_with(|| approx_cmp(mc.eff_perf, other.eff_perf))
+        .then_with(|| approx_cmp(mc.eff_perf, other.eff_perf).cmp( &approx_cmp(mc.gas_perf, other.gas_perf)))
+        .then_with(|| approx_cmp(mc.eff_perf, other.eff_perf).cmp(&approx_cmp(mc.gas_perf, other.gas_perf).cmp(&mc.gas_reward.cmp(&other.gas_reward))))
     }
 }
 
@@ -238,9 +240,6 @@ fn approx_cmp(a: f64, b: f64) -> Ordering {
         a.partial_cmp(&b).unwrap()
     }
 }
-
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 
 pub(crate) fn shuffle_chains(chains: &mut Vec<MsgChain>) {
     chains.shuffle(&mut thread_rng());
