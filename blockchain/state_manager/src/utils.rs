@@ -20,7 +20,7 @@ use interpreter::resolve_to_key_addr;
 use serde::Serialize;
 use state_tree::StateTree;
 use std::error::Error as StdError;
-
+use rayon::prelude::*;
 impl<DB> StateManager<DB>
 where
     DB: BlockStore + Send + Sync + 'static,
@@ -42,7 +42,7 @@ where
             .get_actor(miner_address, st)?
             .ok_or_else(|| Error::State("Power actor address could not be resolved".to_string()))?;
         let mas = miner::State::load(self.blockstore(), &actor)?;
-
+        
         let proving_sectors = if nv < NetworkVersion::V7 {
             let mut proving_sectors = BitField::new();
             mas.for_each_deadline(store, |_, deadline| {
@@ -59,16 +59,18 @@ where
 
             proving_sectors
         } else {
-            let mut proving_sectors = BitField::new();
+            // let mut proving_sectors = BitField::new();
+            let mut ppp = Vec::new();
             mas.for_each_deadline(store, |_, deadline| {
                 deadline.for_each(store, |_, partition: miner::Partition| {
-                    proving_sectors |= &partition.active_sectors();
+                    // proving_sectors |= &partition.active_sectors();
+                    ppp.push(partition.active_sectors());
                     Ok(())
                 })?;
                 Ok(())
             })?;
-
-            proving_sectors
+            ppp.into_par_iter().reduce(|| BitField::new(), |a: BitField, b: BitField| &a | &b)
+            
         };
 
         let num_prov_sect = proving_sectors.len() as u64;

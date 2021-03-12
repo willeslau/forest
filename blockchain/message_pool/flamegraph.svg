@@ -1,0 +1,419 @@
+<?xml version="1.0" standalone="no"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg version="1.1" width="1200" height="774" onload="init(evt)" viewBox="0 0 1200 774" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><!--Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples.--><!--NOTES: --><defs><linearGradient id="background" y1="0" y2="1" x1="0" x2="0"><stop stop-color="#eeeeee" offset="5%"/><stop stop-color="#eeeeb0" offset="95%"/></linearGradient></defs><style type="text/css">
+text { font-family:"Verdana"; font-size:12px; fill:rgb(0,0,0); }
+#title { text-anchor:middle; font-size:17px; }
+#search { opacity:0.1; cursor:pointer; }
+#search:hover, #search.show { opacity:1; }
+#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+#unzoom { cursor:pointer; }
+#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+.hide { display:none; }
+.parent { opacity:0.5; }
+</style><script type="text/ecmascript"><![CDATA[var nametype = 'Function:';
+var fontsize = 12;
+var fontwidth = 0.59;
+var xpad = 10;
+var inverted = false;
+var searchcolor = 'rgb(230,0,230)';
+var fluiddrawing = true;
+var truncate_text_right = false;]]><![CDATA["use strict";
+var details, searchbtn, unzoombtn, matchedtxt, svg, searching, frames;
+function init(evt) {
+    details = document.getElementById("details").firstChild;
+    searchbtn = document.getElementById("search");
+    unzoombtn = document.getElementById("unzoom");
+    matchedtxt = document.getElementById("matched");
+    svg = document.getElementsByTagName("svg")[0];
+    frames = document.getElementById("frames");
+    searching = 0;
+
+    // Use GET parameters to restore a flamegraph's state.
+    var restore_state = function() {
+        var params = get_params();
+        if (params.x && params.y)
+            zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+        if (params.s)
+            search(params.s);
+    };
+
+    if (fluiddrawing) {
+        // Make width dynamic so the SVG fits its parent's width.
+        svg.removeAttribute("width");
+        // Edge requires us to have a viewBox that gets updated with size changes.
+        var isEdge = /Edge\/\d./i.test(navigator.userAgent);
+        if (!isEdge) {
+          svg.removeAttribute("viewBox");
+        }
+        var update_for_width_change = function() {
+            if (isEdge) {
+                svg.attributes.viewBox.value = "0 0 " + svg.width.baseVal.value + " " + svg.height.baseVal.value;
+            }
+
+            // Keep consistent padding on left and right of frames container.
+            frames.attributes.width.value = svg.width.baseVal.value - xpad * 2;
+
+            // Text truncation needs to be adjusted for the current width.
+            var el = frames.children;
+            for(var i = 0; i < el.length; i++) {
+                update_text(el[i]);
+            }
+
+            // Keep search elements at a fixed distance from right edge.
+            var svgWidth = svg.width.baseVal.value;
+            searchbtn.attributes.x.value = svgWidth - xpad - 100;
+            matchedtxt.attributes.x.value = svgWidth - xpad - 100;
+        };
+        window.addEventListener('resize', function() {
+            update_for_width_change();
+        });
+        // This needs to be done asynchronously for Safari to work.
+        setTimeout(function() {
+            unzoom();
+            update_for_width_change();
+            restore_state();
+        }, 0);
+    } else {
+        restore_state();
+    }
+}
+// event listeners
+window.addEventListener("click", function(e) {
+    var target = find_group(e.target);
+    if (target) {
+        if (target.nodeName == "a") {
+            if (e.ctrlKey === false) return;
+            e.preventDefault();
+        }
+        if (target.classList.contains("parent")) unzoom();
+        zoom(target);
+
+        // set parameters for zoom state
+        var el = target.querySelector("rect");
+        if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+            var params = get_params()
+            params.x = el.attributes._orig_x.value;
+            params.y = el.attributes.y.value;
+            history.replaceState(null, null, parse_params(params));
+        }
+    }
+    else if (e.target.id == "unzoom") {
+        unzoom();
+
+        // remove zoom state
+        var params = get_params();
+        if (params.x) delete params.x;
+        if (params.y) delete params.y;
+        history.replaceState(null, null, parse_params(params));
+    }
+    else if (e.target.id == "search") search_prompt();
+}, false)
+// mouse-over for info
+// show
+window.addEventListener("mouseover", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = nametype + " " + g_to_text(target);
+}, false)
+// clear
+window.addEventListener("mouseout", function(e) {
+    var target = find_group(e.target);
+    if (target) details.nodeValue = ' ';
+}, false)
+// ctrl-F for search
+window.addEventListener("keydown",function (e) {
+    if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+        e.preventDefault();
+        search_prompt();
+    }
+}, false)
+// functions
+function get_params() {
+    var params = {};
+    var paramsarr = window.location.search.substr(1).split('&');
+    for (var i = 0; i < paramsarr.length; ++i) {
+        var tmp = paramsarr[i].split("=");
+        if (!tmp[0] || !tmp[1]) continue;
+        params[tmp[0]]  = decodeURIComponent(tmp[1]);
+    }
+    return params;
+}
+function parse_params(params) {
+    var uri = "?";
+    for (var key in params) {
+        uri += key + '=' + encodeURIComponent(params[key]) + '&';
+    }
+    if (uri.slice(-1) == "&")
+        uri = uri.substring(0, uri.length - 1);
+    if (uri == '?')
+        uri = window.location.href.split('?')[0];
+    return uri;
+}
+function find_child(node, selector) {
+    var children = node.querySelectorAll(selector);
+    if (children.length) return children[0];
+    return;
+}
+function find_group(node) {
+    var parent = node.parentElement;
+    if (!parent) return;
+    if (parent.id == "frames") return node;
+    return find_group(parent);
+}
+function orig_save(e, attr, val) {
+    if (e.attributes["_orig_" + attr] != undefined) return;
+    if (e.attributes[attr] == undefined) return;
+    if (val == undefined) val = e.attributes[attr].value;
+    e.setAttribute("_orig_" + attr, val);
+}
+function orig_load(e, attr) {
+    if (e.attributes["_orig_"+attr] == undefined) return;
+    e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+    e.removeAttribute("_orig_" + attr);
+}
+function g_to_text(e) {
+    var text = find_child(e, "title").firstChild.nodeValue;
+    return (text)
+}
+function g_to_func(e) {
+    var func = g_to_text(e);
+    // if there's any manipulation we want to do to the function
+    // name before it's searched, do it here before returning.
+    return (func);
+}
+function update_text(e) {
+    var r = find_child(e, "rect");
+    var t = find_child(e, "text");
+    var w = parseFloat(r.attributes.width.value) * frames.attributes.width.value / 100 - 3;
+    var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+    t.attributes.x.value = format_percent((parseFloat(r.attributes.x.value) + (100 * 3 / frames.attributes.width.value)));
+    // Smaller than this size won't fit anything
+    if (w < 2 * fontsize * fontwidth) {
+        t.textContent = "";
+        return;
+    }
+    t.textContent = txt;
+    // Fit in full text width
+    if (/^ *\$/.test(txt) || t.getComputedTextLength() < w)
+        return;
+    if (truncate_text_right) {
+        // Truncate the right side of the text.
+        for (var x = txt.length - 2; x > 0; x--) {
+            if (t.getSubStringLength(0, x + 2) <= w) {
+                t.textContent = txt.substring(0, x) + "..";
+                return;
+            }
+        }
+    } else {
+        // Truncate the left side of the text.
+        for (var x = 2; x < txt.length; x++) {
+            if (t.getSubStringLength(x - 2, txt.length) <= w) {
+                t.textContent = ".." + txt.substring(x, txt.length);
+                return;
+            }
+        }
+    }
+    t.textContent = "";
+}
+// zoom
+function zoom_reset(e) {
+    if (e.attributes != undefined) {
+        orig_load(e, "x");
+        orig_load(e, "width");
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_reset(c[i]);
+    }
+}
+function zoom_child(e, x, ratio) {
+    if (e.attributes != undefined) {
+        if (e.attributes.x != undefined) {
+            orig_save(e, "x");
+            e.attributes.x.value = format_percent((parseFloat(e.attributes.x.value) - x) * ratio);
+            if (e.tagName == "text") {
+                e.attributes.x.value = format_percent(parseFloat(find_child(e.parentNode, "rect[x]").attributes.x.value) + (100 * 3 / frames.attributes.width.value));
+            }
+        }
+        if (e.attributes.width != undefined) {
+            orig_save(e, "width");
+            e.attributes.width.value = format_percent(parseFloat(e.attributes.width.value) * ratio);
+        }
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_child(c[i], x, ratio);
+    }
+}
+function zoom_parent(e) {
+    if (e.attributes) {
+        if (e.attributes.x != undefined) {
+            orig_save(e, "x");
+            e.attributes.x.value = "0.0%";
+        }
+        if (e.attributes.width != undefined) {
+            orig_save(e, "width");
+            e.attributes.width.value = "100.0%";
+        }
+    }
+    if (e.childNodes == undefined) return;
+    for(var i = 0, c = e.childNodes; i < c.length; i++) {
+        zoom_parent(c[i]);
+    }
+}
+function zoom(node) {
+    var attr = find_child(node, "rect").attributes;
+    var width = parseFloat(attr.width.value);
+    var xmin = parseFloat(attr.x.value);
+    var xmax = xmin + width;
+    var ymin = parseFloat(attr.y.value);
+    var ratio = 100 / width;
+    // XXX: Workaround for JavaScript float issues (fix me)
+    var fudge = 0.001;
+    unzoombtn.classList.remove("hide");
+    var el = frames.children;
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        var a = find_child(e, "rect").attributes;
+        var ex = parseFloat(a.x.value);
+        var ew = parseFloat(a.width.value);
+        // Is it an ancestor
+        if (!inverted) {
+            var upstack = parseFloat(a.y.value) > ymin;
+        } else {
+            var upstack = parseFloat(a.y.value) < ymin;
+        }
+        if (upstack) {
+            // Direct ancestor
+            if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+                e.classList.add("parent");
+                zoom_parent(e);
+                update_text(e);
+            }
+            // not in current path
+            else
+                e.classList.add("hide");
+        }
+        // Children maybe
+        else {
+            // no common path
+            if (ex < xmin || ex + fudge >= xmax) {
+                e.classList.add("hide");
+            }
+            else {
+                zoom_child(e, xmin, ratio);
+                update_text(e);
+            }
+        }
+    }
+}
+function unzoom() {
+    unzoombtn.classList.add("hide");
+    var el = frames.children;
+    for(var i = 0; i < el.length; i++) {
+        el[i].classList.remove("parent");
+        el[i].classList.remove("hide");
+        zoom_reset(el[i]);
+        update_text(el[i]);
+    }
+}
+// search
+function reset_search() {
+    var el = document.querySelectorAll("#frames rect");
+    for (var i = 0; i < el.length; i++) {
+        orig_load(el[i], "fill")
+    }
+    var params = get_params();
+    delete params.s;
+    history.replaceState(null, null, parse_params(params));
+}
+function search_prompt() {
+    if (!searching) {
+        var term = prompt("Enter a search term (regexp " +
+            "allowed, eg: ^ext4_)", "");
+        if (term != null) {
+            search(term)
+        }
+    } else {
+        reset_search();
+        searching = 0;
+        searchbtn.classList.remove("show");
+        searchbtn.firstChild.nodeValue = "Search"
+        matchedtxt.classList.add("hide");
+        matchedtxt.firstChild.nodeValue = ""
+    }
+}
+function search(term) {
+    var re = new RegExp(term);
+    var el = frames.children;
+    var matches = new Object();
+    var maxwidth = 0;
+    for (var i = 0; i < el.length; i++) {
+        var e = el[i];
+        var func = g_to_func(e);
+        var rect = find_child(e, "rect");
+        if (func == null || rect == null)
+            continue;
+        // Save max width. Only works as we have a root frame
+        var w = parseFloat(rect.attributes.width.value);
+        if (w > maxwidth)
+            maxwidth = w;
+        if (func.match(re)) {
+            // highlight
+            var x = parseFloat(rect.attributes.x.value);
+            orig_save(rect, "fill");
+            rect.attributes.fill.value = searchcolor;
+            // remember matches
+            if (matches[x] == undefined) {
+                matches[x] = w;
+            } else {
+                if (w > matches[x]) {
+                    // overwrite with parent
+                    matches[x] = w;
+                }
+            }
+            searching = 1;
+        }
+    }
+    if (!searching)
+        return;
+    var params = get_params();
+    params.s = term;
+    history.replaceState(null, null, parse_params(params));
+
+    searchbtn.classList.add("show");
+    searchbtn.firstChild.nodeValue = "Reset Search";
+    // calculate percent matched, excluding vertical overlap
+    var count = 0;
+    var lastx = -1;
+    var lastw = 0;
+    var keys = Array();
+    for (k in matches) {
+        if (matches.hasOwnProperty(k))
+            keys.push(k);
+    }
+    // sort the matched frames by their x location
+    // ascending, then width descending
+    keys.sort(function(a, b){
+        return a - b;
+    });
+    // Step through frames saving only the biggest bottom-up frames
+    // thanks to the sort order. This relies on the tree property
+    // where children are always smaller than their parents.
+    var fudge = 0.0001;    // JavaScript floating point
+    for (var k in keys) {
+        var x = parseFloat(keys[k]);
+        var w = matches[keys[k]];
+        if (x >= lastx + lastw - fudge) {
+            count += w;
+            lastx = x;
+            lastw = w;
+        }
+    }
+    // display matched percent
+    matchedtxt.classList.remove("hide");
+    var pct = 100 * count / maxwidth;
+    if (pct != 100) pct = pct.toFixed(1);
+    matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+}
+function format_percent(n) {
+    return n.toFixed(4) + "%";
+}
+]]></script><rect x="0" y="0" width="100%" height="774" fill="url(#background)"/><text id="title" x="50.0000%" y="24.00">Flame Graph</text><text id="details" x="10" y="757.00"> </text><text id="unzoom" class="hide" x="10" y="24.00">Reset Zoom</text><text id="search" x="1090" y="24.00">Search</text><text id="matched" x="1090" y="757.00"> </text><svg id="frames" x="10" width="1180"><g><title>&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll (1 samples, 0.18%)</title><rect x="0.1805%" y="165" width="0.1805%" height="15" fill="rgb(227,0,7)"/><text x="0.4305%" y="175.50"></text></g><g><title>&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll (1 samples, 0.18%)</title><rect x="0.1805%" y="149" width="0.1805%" height="15" fill="rgb(217,0,24)"/><text x="0.4305%" y="159.50"></text></g><g><title>&lt;message_pool::msgpool::test_provider::TestApi as message_pool::msgpool::provider::Provider&gt;::get_actor_after (1 samples, 0.18%)</title><rect x="0.3610%" y="165" width="0.1805%" height="15" fill="rgb(221,193,54)"/><text x="0.6110%" y="175.50"></text></g><g><title>subtle::black_box (1 samples, 0.18%)</title><rect x="0.3610%" y="149" width="0.1805%" height="15" fill="rgb(248,212,6)"/><text x="0.6110%" y="159.50"></text></g><g><title>&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll (5 samples, 0.90%)</title><rect x="0.0000%" y="181" width="0.9025%" height="15" fill="rgb(208,68,35)"/><text x="0.2500%" y="191.50"></text></g><g><title>message_pool::msgpool::msg_pool::MsgSet::add (2 samples, 0.36%)</title><rect x="0.5415%" y="165" width="0.3610%" height="15" fill="rgb(232,128,0)"/><text x="0.7915%" y="175.50"></text></g><g><title>hashbrown::map::HashMap&lt;K,V,S&gt;::insert (2 samples, 0.36%)</title><rect x="0.5415%" y="149" width="0.3610%" height="15" fill="rgb(207,160,47)"/><text x="0.7915%" y="159.50"></text></g><g><title>hashbrown::raw::RawTable&lt;T&gt;::insert (2 samples, 0.36%)</title><rect x="0.5415%" y="133" width="0.3610%" height="15" fill="rgb(228,23,34)"/><text x="0.7915%" y="143.50"></text></g><g><title>hashbrown::raw::RawTable&lt;T&gt;::reserve_rehash (2 samples, 0.36%)</title><rect x="0.5415%" y="117" width="0.3610%" height="15" fill="rgb(218,30,26)"/><text x="0.7915%" y="127.50"></text></g><g><title>hashbrown::map::make_hash (1 samples, 0.18%)</title><rect x="0.7220%" y="101" width="0.1805%" height="15" fill="rgb(220,122,19)"/><text x="0.9720%" y="111.50"></text></g><g><title>&lt;forest_crypto::signature::Signature as serde::ser::Serialize&gt;::serialize (1 samples, 0.18%)</title><rect x="0.9025%" y="149" width="0.1805%" height="15" fill="rgb(250,228,42)"/><text x="1.1525%" y="159.50"></text></g><g><title>&lt;alloc::vec::Vec&lt;u8&gt; as cs_serde_bytes::ser::Serialize&gt;::serialize (1 samples, 0.18%)</title><rect x="0.9025%" y="133" width="0.1805%" height="15" fill="rgb(240,193,28)"/><text x="1.1525%" y="143.50"></text></g><g><title>&lt;alloc::vec::Vec&lt;u8&gt; as cs_serde_cbor::write::Write&gt;::write_all (1 samples, 0.18%)</title><rect x="0.9025%" y="117" width="0.1805%" height="15" fill="rgb(216,20,37)"/><text x="1.1525%" y="127.50"></text></g><g><title>alloc::raw_vec::finish_grow (1 samples, 0.18%)</title><rect x="0.9025%" y="101" width="0.1805%" height="15" fill="rgb(206,188,39)"/><text x="1.1525%" y="111.50"></text></g><g><title>__libc_realloc (1 samples, 0.18%)</title><rect x="0.9025%" y="85" width="0.1805%" height="15" fill="rgb(217,207,13)"/><text x="1.1525%" y="95.50"></text></g><g><title>&lt;forest_message::signed_message::SignedMessage as forest_encoding::cbor::Cbor&gt;::marshal_cbor (2 samples, 0.36%)</title><rect x="0.9025%" y="181" width="0.3610%" height="15" fill="rgb(231,73,38)"/><text x="1.1525%" y="191.50"></text></g><g><title>cs_serde_cbor::ser::to_vec (2 samples, 0.36%)</title><rect x="0.9025%" y="165" width="0.3610%" height="15" fill="rgb(225,20,46)"/><text x="1.1525%" y="175.50"></text></g><g><title>&lt;forest_message::unsigned_message::UnsignedMessage as serde::ser::Serialize&gt;::serialize (1 samples, 0.18%)</title><rect x="1.0830%" y="149" width="0.1805%" height="15" fill="rgb(210,31,41)"/><text x="1.3330%" y="159.50"></text></g><g><title>&lt;alloc::vec::Vec&lt;u8&gt; as cs_serde_bytes::ser::Serialize&gt;::serialize (1 samples, 0.18%)</title><rect x="1.0830%" y="133" width="0.1805%" height="15" fill="rgb(221,200,47)"/><text x="1.3330%" y="143.50"></text></g><g><title>blake2b_simd::State::update (1 samples, 0.18%)</title><rect x="1.2635%" y="133" width="0.1805%" height="15" fill="rgb(226,26,5)"/><text x="1.5135%" y="143.50"></text></g><g><title>blake2b_simd::avx2::compress1_loop (1 samples, 0.18%)</title><rect x="1.2635%" y="117" width="0.1805%" height="15" fill="rgb(249,33,26)"/><text x="1.5135%" y="127.50"></text></g><g><title>forest_cid::new_from_cbor (2 samples, 0.36%)</title><rect x="1.2635%" y="181" width="0.3610%" height="15" fill="rgb(235,183,28)"/><text x="1.5135%" y="191.50"></text></g><g><title>&lt;forest_cid::mh_code::Code as multihash::multihash::MultihashDigest&gt;::digest (2 samples, 0.36%)</title><rect x="1.2635%" y="165" width="0.3610%" height="15" fill="rgb(221,5,38)"/><text x="1.5135%" y="175.50"></text></g><g><title>&lt;T as multihash::hasher::Hasher&gt;::digest (2 samples, 0.36%)</title><rect x="1.2635%" y="149" width="0.3610%" height="15" fill="rgb(247,18,42)"/><text x="1.5135%" y="159.50"></text></g><g><title>generic_array::GenericArray&lt;T,N&gt;::from_exact_iter (1 samples, 0.18%)</title><rect x="1.4440%" y="133" width="0.1805%" height="15" fill="rgb(241,131,45)"/><text x="1.6940%" y="143.50"></text></g><g><title>secp256k1::ecmult::ecmult_wnaf (1 samples, 0.18%)</title><rect x="2.5271%" y="85" width="0.1805%" height="15" fill="rgb(249,31,29)"/><text x="2.7771%" y="95.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (2 samples, 0.36%)</title><rect x="2.7076%" y="53" width="0.3610%" height="15" fill="rgb(225,111,53)"/><text x="2.9576%" y="63.50"></text></g><g><title>secp256k1::ecmult::odd_multiples_table (4 samples, 0.72%)</title><rect x="2.7076%" y="85" width="0.7220%" height="15" fill="rgb(238,160,17)"/><text x="2.9576%" y="95.50"></text></g><g><title>secp256k1::group::Jacobian::add_ge_var_in_place (4 samples, 0.72%)</title><rect x="2.7076%" y="69" width="0.7220%" height="15" fill="rgb(214,148,48)"/><text x="2.9576%" y="79.50"></text></g><g><title>secp256k1::field::Field::sqr_in_place (2 samples, 0.36%)</title><rect x="3.0686%" y="53" width="0.3610%" height="15" fill="rgb(232,36,49)"/><text x="3.3186%" y="63.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (14 samples, 2.53%)</title><rect x="3.7906%" y="69" width="2.5271%" height="15" fill="rgb(209,103,24)"/><text x="4.0406%" y="79.50">se..</text></g><g><title>secp256k1::group::Jacobian::add_ge_var_in_place (18 samples, 3.25%)</title><rect x="3.4296%" y="85" width="3.2491%" height="15" fill="rgb(229,88,8)"/><text x="3.6796%" y="95.50">sec..</text></g><g><title>secp256k1::field::Field::sqr_in_place (2 samples, 0.36%)</title><rect x="6.3177%" y="69" width="0.3610%" height="15" fill="rgb(213,181,19)"/><text x="6.5677%" y="79.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (5 samples, 0.90%)</title><rect x="7.5812%" y="69" width="0.9025%" height="15" fill="rgb(254,191,54)"/><text x="7.8312%" y="79.50"></text></g><g><title>secp256k1::group::Jacobian::add_zinv_var_in_place (11 samples, 1.99%)</title><rect x="6.6787%" y="85" width="1.9856%" height="15" fill="rgb(241,83,37)"/><text x="6.9287%" y="95.50">s..</text></g><g><title>secp256k1::field::Field::sqr_in_place (1 samples, 0.18%)</title><rect x="8.4838%" y="69" width="0.1805%" height="15" fill="rgb(233,36,39)"/><text x="8.7338%" y="79.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (36 samples, 6.50%)</title><rect x="11.7329%" y="69" width="6.4982%" height="15" fill="rgb(226,3,54)"/><text x="11.9829%" y="79.50">secp256k1..</text></g><g><title>secp256k1::group::Jacobian::double_var_in_place (80 samples, 14.44%)</title><rect x="8.6643%" y="85" width="14.4404%" height="15" fill="rgb(245,192,40)"/><text x="8.9143%" y="95.50">secp256k1::group::Jaco..</text></g><g><title>secp256k1::field::Field::sqr_in_place (27 samples, 4.87%)</title><rect x="18.2310%" y="69" width="4.8736%" height="15" fill="rgb(238,167,29)"/><text x="18.4810%" y="79.50">secp25..</text></g><g><title>secp256k1::field::Field::mul_in_place (2 samples, 0.36%)</title><rect x="23.1047%" y="69" width="0.3610%" height="15" fill="rgb(232,182,51)"/><text x="23.3547%" y="79.50"></text></g><g><title>secp256k1::ecmult::ECMultContext::ecmult (122 samples, 22.02%)</title><rect x="1.6245%" y="101" width="22.0217%" height="15" fill="rgb(231,60,39)"/><text x="1.8745%" y="111.50">secp256k1::ecmult::ECMultContext::e..</text></g><g><title>secp256k1::group::globalz_set_table_gej (3 samples, 0.54%)</title><rect x="23.1047%" y="85" width="0.5415%" height="15" fill="rgb(208,69,12)"/><text x="23.3547%" y="95.50"></text></g><g><title>secp256k1::field::Field::sqr_in_place (1 samples, 0.18%)</title><rect x="23.4657%" y="69" width="0.1805%" height="15" fill="rgb(235,93,37)"/><text x="23.7157%" y="79.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (1 samples, 0.18%)</title><rect x="24.0072%" y="69" width="0.1805%" height="15" fill="rgb(213,116,39)"/><text x="24.2572%" y="79.50"></text></g><g><title>secp256k1::group::Affine::set_gej_var (14 samples, 2.53%)</title><rect x="23.6462%" y="101" width="2.5271%" height="15" fill="rgb(222,207,29)"/><text x="23.8962%" y="111.50">se..</text></g><g><title>secp256k1::field::Field::inv (14 samples, 2.53%)</title><rect x="23.6462%" y="85" width="2.5271%" height="15" fill="rgb(206,96,30)"/><text x="23.8962%" y="95.50">se..</text></g><g><title>secp256k1::field::Field::sqr_in_place (11 samples, 1.99%)</title><rect x="24.1877%" y="69" width="1.9856%" height="15" fill="rgb(218,138,4)"/><text x="24.4377%" y="79.50">s..</text></g><g><title>secp256k1::group::Affine::set_xo_var (10 samples, 1.81%)</title><rect x="26.1733%" y="101" width="1.8051%" height="15" fill="rgb(250,191,14)"/><text x="26.4233%" y="111.50">s..</text></g><g><title>secp256k1::field::Field::sqrt (10 samples, 1.81%)</title><rect x="26.1733%" y="85" width="1.8051%" height="15" fill="rgb(239,60,40)"/><text x="26.4233%" y="95.50">s..</text></g><g><title>secp256k1::field::Field::sqr_in_place (8 samples, 1.44%)</title><rect x="26.5343%" y="69" width="1.4440%" height="15" fill="rgb(206,27,48)"/><text x="26.7843%" y="79.50"></text></g><g><title>secp256k1::scalar::Scalar::mul_in_place (7 samples, 1.26%)</title><rect x="28.5199%" y="85" width="1.2635%" height="15" fill="rgb(225,35,8)"/><text x="28.7699%" y="95.50"></text></g><g><title>secp256k1::scalar::Scalar::reduce_512 (5 samples, 0.90%)</title><rect x="28.8809%" y="69" width="0.9025%" height="15" fill="rgb(250,213,24)"/><text x="29.1309%" y="79.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (4 samples, 0.72%)</title><rect x="29.0614%" y="53" width="0.7220%" height="15" fill="rgb(247,123,22)"/><text x="29.3114%" y="63.50"></text></g><g><title>subtle::black_box (4 samples, 0.72%)</title><rect x="29.0614%" y="37" width="0.7220%" height="15" fill="rgb(231,138,38)"/><text x="29.3114%" y="47.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (23 samples, 4.15%)</title><rect x="33.5740%" y="53" width="4.1516%" height="15" fill="rgb(231,145,46)"/><text x="33.8240%" y="63.50">secp2..</text></g><g><title>subtle::black_box (21 samples, 3.79%)</title><rect x="33.9350%" y="37" width="3.7906%" height="15" fill="rgb(251,118,11)"/><text x="34.1850%" y="47.50">subt..</text></g><g><title>forest_crypto::signature::Signature::verify (201 samples, 36.28%)</title><rect x="1.6245%" y="165" width="36.2816%" height="15" fill="rgb(217,147,25)"/><text x="1.8745%" y="175.50">forest_crypto::signature::Signature::verify</text></g><g><title>forest_crypto::signature::ecrecover (201 samples, 36.28%)</title><rect x="1.6245%" y="149" width="36.2816%" height="15" fill="rgb(247,81,37)"/><text x="1.8745%" y="159.50">forest_crypto::signature::ecrecover</text></g><g><title>secp256k1::recover (201 samples, 36.28%)</title><rect x="1.6245%" y="133" width="36.2816%" height="15" fill="rgb(209,12,38)"/><text x="1.8745%" y="143.50">secp256k1::recover</text></g><g><title>secp256k1::ecdsa::&lt;impl secp256k1::ecmult::ECMultContext&gt;::recover_raw (201 samples, 36.28%)</title><rect x="1.6245%" y="117" width="36.2816%" height="15" fill="rgb(227,1,9)"/><text x="1.8745%" y="127.50">secp256k1::ecdsa::&lt;impl secp256k1::ecmult::ECMultContext&gt;::..</text></g><g><title>secp256k1::scalar::Scalar::inv_in_place (55 samples, 9.93%)</title><rect x="27.9783%" y="101" width="9.9278%" height="15" fill="rgb(248,47,43)"/><text x="28.2283%" y="111.50">secp256k1::sca..</text></g><g><title>secp256k1::scalar::Scalar::sqr_in_place (45 samples, 8.12%)</title><rect x="29.7834%" y="85" width="8.1227%" height="15" fill="rgb(221,10,30)"/><text x="30.0334%" y="95.50">secp256k1::..</text></g><g><title>secp256k1::scalar::Scalar::reduce_512 (33 samples, 5.96%)</title><rect x="31.9495%" y="69" width="5.9567%" height="15" fill="rgb(210,229,1)"/><text x="32.1995%" y="79.50">secp256k..</text></g><g><title>subtle::black_box (1 samples, 0.18%)</title><rect x="37.7256%" y="53" width="0.1805%" height="15" fill="rgb(222,148,37)"/><text x="37.9756%" y="63.50"></text></g><g><title>forest_message::signed_message::SignedMessage::verify (202 samples, 36.46%)</title><rect x="1.6245%" y="181" width="36.4621%" height="15" fill="rgb(234,67,33)"/><text x="1.8745%" y="191.50">forest_message::signed_message::SignedMessage::verify</text></g><g><title>forest_encoding::cbor::Cbor::cid (1 samples, 0.18%)</title><rect x="37.9061%" y="165" width="0.1805%" height="15" fill="rgb(247,98,35)"/><text x="38.1561%" y="175.50"></text></g><g><title>forest_cid::new_from_cbor (1 samples, 0.18%)</title><rect x="37.9061%" y="149" width="0.1805%" height="15" fill="rgb(247,138,52)"/><text x="38.1561%" y="159.50"></text></g><g><title>&lt;forest_cid::mh_code::Code as multihash::multihash::MultihashDigest&gt;::digest (1 samples, 0.18%)</title><rect x="37.9061%" y="133" width="0.1805%" height="15" fill="rgb(213,79,30)"/><text x="38.1561%" y="143.50"></text></g><g><title>&lt;T as multihash::hasher::Hasher&gt;::digest (1 samples, 0.18%)</title><rect x="37.9061%" y="117" width="0.1805%" height="15" fill="rgb(246,177,23)"/><text x="38.1561%" y="127.50"></text></g><g><title>blake2b_simd::State::finalize (1 samples, 0.18%)</title><rect x="37.9061%" y="101" width="0.1805%" height="15" fill="rgb(230,62,27)"/><text x="38.1561%" y="111.50"></text></g><g><title>blake2b_simd::avx2::compress1_loop (1 samples, 0.18%)</title><rect x="37.9061%" y="85" width="0.1805%" height="15" fill="rgb(216,154,8)"/><text x="38.1561%" y="95.50"></text></g><g><title>&lt;forest_message::signed_message::SignedMessage as forest_encoding::cbor::Cbor&gt;::marshal_cbor (1 samples, 0.18%)</title><rect x="38.0866%" y="165" width="0.1805%" height="15" fill="rgb(244,35,45)"/><text x="38.3366%" y="175.50"></text></g><g><title>cs_serde_cbor::ser::to_vec (1 samples, 0.18%)</title><rect x="38.0866%" y="149" width="0.1805%" height="15" fill="rgb(251,115,12)"/><text x="38.3366%" y="159.50"></text></g><g><title>&lt;forest_message::unsigned_message::UnsignedMessage as serde::ser::Serialize&gt;::serialize (1 samples, 0.18%)</title><rect x="38.0866%" y="133" width="0.1805%" height="15" fill="rgb(240,54,50)"/><text x="38.3366%" y="143.50"></text></g><g><title>cs_serde_cbor::ser::Serializer&lt;W&gt;::write_u64 (1 samples, 0.18%)</title><rect x="38.0866%" y="117" width="0.1805%" height="15" fill="rgb(233,84,52)"/><text x="38.3366%" y="127.50"></text></g><g><title>&lt;alloc::vec::Vec&lt;u8&gt; as cs_serde_cbor::write::Write&gt;::write_all (1 samples, 0.18%)</title><rect x="38.0866%" y="101" width="0.1805%" height="15" fill="rgb(207,117,47)"/><text x="38.3366%" y="111.50"></text></g><g><title>&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll (213 samples, 38.45%)</title><rect x="0.0000%" y="197" width="38.4477%" height="15" fill="rgb(249,43,39)"/><text x="0.2500%" y="207.50">&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::fu..</text></g><g><title>message_pool::msgpool::msg_pool::verify_msg_before_add (2 samples, 0.36%)</title><rect x="38.0866%" y="181" width="0.3610%" height="15" fill="rgb(209,38,44)"/><text x="38.3366%" y="191.50"></text></g><g><title>forest_message::unsigned_message::UnsignedMessage::valid_for_block_inclusion (1 samples, 0.18%)</title><rect x="38.2671%" y="165" width="0.1805%" height="15" fill="rgb(236,212,23)"/><text x="38.5171%" y="175.50"></text></g><g><title>&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll (1 samples, 0.18%)</title><rect x="38.4477%" y="181" width="0.1805%" height="15" fill="rgb(242,79,21)"/><text x="38.6977%" y="191.50"></text></g><g><title>alloc::slice::merge_sort (1 samples, 0.18%)</title><rect x="38.4477%" y="165" width="0.1805%" height="15" fill="rgb(211,96,35)"/><text x="38.6977%" y="175.50"></text></g><g><title>&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll (215 samples, 38.81%)</title><rect x="0.0000%" y="213" width="38.8087%" height="15" fill="rgb(253,215,40)"/><text x="0.2500%" y="223.50">&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::fu..</text></g><g><title>message_pool::msgpool::selection::&lt;impl message_pool::msgpool::msg_pool::MessagePool&lt;T&gt;&gt;::select_messages_optimal::{{closure}} (2 samples, 0.36%)</title><rect x="38.4477%" y="197" width="0.3610%" height="15" fill="rgb(211,81,21)"/><text x="38.6977%" y="207.50"></text></g><g><title>message_pool::msgpool::selection::&lt;impl message_pool::msgpool::msg_pool::MessagePool&lt;T&gt;&gt;::get_pending_messages::{{closure}} (1 samples, 0.18%)</title><rect x="38.6282%" y="181" width="0.1805%" height="15" fill="rgb(208,190,38)"/><text x="38.8782%" y="191.50"></text></g><g><title>&lt;hashbrown::raw::RawTable&lt;T&gt; as core::clone::Clone&gt;::clone (1 samples, 0.18%)</title><rect x="38.6282%" y="165" width="0.1805%" height="15" fill="rgb(235,213,38)"/><text x="38.8782%" y="175.50"></text></g><g><title>forest_address::Address::new_secp256k1 (1 samples, 0.18%)</title><rect x="38.8087%" y="149" width="0.1805%" height="15" fill="rgb(237,122,38)"/><text x="39.0587%" y="159.50"></text></g><g><title>secp256k1::Message::parse (1 samples, 0.18%)</title><rect x="38.9892%" y="149" width="0.1805%" height="15" fill="rgb(244,218,35)"/><text x="39.2392%" y="159.50"></text></g><g><title>secp256k1::scalar::Scalar::set_b32 (1 samples, 0.18%)</title><rect x="38.9892%" y="133" width="0.1805%" height="15" fill="rgb(240,68,47)"/><text x="39.2392%" y="143.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (1 samples, 0.18%)</title><rect x="38.9892%" y="117" width="0.1805%" height="15" fill="rgb(210,16,53)"/><text x="39.2392%" y="127.50"></text></g><g><title>subtle::black_box (1 samples, 0.18%)</title><rect x="38.9892%" y="101" width="0.1805%" height="15" fill="rgb(235,124,12)"/><text x="39.2392%" y="111.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (2 samples, 0.36%)</title><rect x="40.7942%" y="69" width="0.3610%" height="15" fill="rgb(224,169,11)"/><text x="41.0442%" y="79.50"></text></g><g><title>secp256k1::group::Jacobian::add_ge_var_in_place (3 samples, 0.54%)</title><rect x="40.7942%" y="85" width="0.5415%" height="15" fill="rgb(250,166,2)"/><text x="41.0442%" y="95.50"></text></g><g><title>secp256k1::field::Field::sqr_in_place (1 samples, 0.18%)</title><rect x="41.1552%" y="69" width="0.1805%" height="15" fill="rgb(242,216,29)"/><text x="41.4052%" y="79.50"></text></g><g><title>secp256k1::ecmult::odd_multiples_table (4 samples, 0.72%)</title><rect x="40.7942%" y="101" width="0.7220%" height="15" fill="rgb(230,116,27)"/><text x="41.0442%" y="111.50"></text></g><g><title>secp256k1::group::Jacobian::double_var_in_place (1 samples, 0.18%)</title><rect x="41.3357%" y="85" width="0.1805%" height="15" fill="rgb(228,99,48)"/><text x="41.5857%" y="95.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (1 samples, 0.18%)</title><rect x="41.3357%" y="69" width="0.1805%" height="15" fill="rgb(253,11,6)"/><text x="41.5857%" y="79.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (11 samples, 1.99%)</title><rect x="42.7798%" y="85" width="1.9856%" height="15" fill="rgb(247,143,39)"/><text x="43.0298%" y="95.50">s..</text></g><g><title>secp256k1::group::Jacobian::add_ge_var_in_place (20 samples, 3.61%)</title><rect x="41.5162%" y="101" width="3.6101%" height="15" fill="rgb(236,97,10)"/><text x="41.7662%" y="111.50">secp..</text></g><g><title>secp256k1::field::Field::sqr_in_place (2 samples, 0.36%)</title><rect x="44.7653%" y="85" width="0.3610%" height="15" fill="rgb(233,208,19)"/><text x="45.0153%" y="95.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (3 samples, 0.54%)</title><rect x="45.4874%" y="85" width="0.5415%" height="15" fill="rgb(216,164,2)"/><text x="45.7374%" y="95.50"></text></g><g><title>secp256k1::group::Jacobian::add_zinv_var_in_place (6 samples, 1.08%)</title><rect x="45.1264%" y="101" width="1.0830%" height="15" fill="rgb(220,129,5)"/><text x="45.3764%" y="111.50"></text></g><g><title>secp256k1::field::Field::sqr_in_place (1 samples, 0.18%)</title><rect x="46.0289%" y="85" width="0.1805%" height="15" fill="rgb(242,17,10)"/><text x="46.2789%" y="95.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (42 samples, 7.58%)</title><rect x="48.1949%" y="85" width="7.5812%" height="15" fill="rgb(242,107,0)"/><text x="48.4449%" y="95.50">secp256k1:..</text></g><g><title>secp256k1::group::Jacobian::double_var_in_place (80 samples, 14.44%)</title><rect x="46.2094%" y="101" width="14.4404%" height="15" fill="rgb(251,28,31)"/><text x="46.4594%" y="111.50">secp256k1::group::Jaco..</text></g><g><title>secp256k1::field::Field::sqr_in_place (27 samples, 4.87%)</title><rect x="55.7762%" y="85" width="4.8736%" height="15" fill="rgb(233,223,10)"/><text x="56.0262%" y="95.50">secp25..</text></g><g><title>secp256k1::ecmult::ECMultContext::ecmult (125 samples, 22.56%)</title><rect x="39.3502%" y="117" width="22.5632%" height="15" fill="rgb(215,21,27)"/><text x="39.6002%" y="127.50">secp256k1::ecmult::ECMultContext::ec..</text></g><g><title>secp256k1::group::globalz_set_table_gej (7 samples, 1.26%)</title><rect x="60.6498%" y="101" width="1.2635%" height="15" fill="rgb(232,23,21)"/><text x="60.8998%" y="111.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (7 samples, 1.26%)</title><rect x="60.6498%" y="85" width="1.2635%" height="15" fill="rgb(244,5,23)"/><text x="60.8998%" y="95.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (1 samples, 0.18%)</title><rect x="62.0939%" y="85" width="0.1805%" height="15" fill="rgb(226,81,46)"/><text x="62.3439%" y="95.50"></text></g><g><title>secp256k1::group::Affine::set_gej_var (7 samples, 1.26%)</title><rect x="61.9134%" y="117" width="1.2635%" height="15" fill="rgb(247,70,30)"/><text x="62.1634%" y="127.50"></text></g><g><title>secp256k1::field::Field::inv (7 samples, 1.26%)</title><rect x="61.9134%" y="101" width="1.2635%" height="15" fill="rgb(212,68,19)"/><text x="62.1634%" y="111.50"></text></g><g><title>secp256k1::field::Field::sqr_in_place (5 samples, 0.90%)</title><rect x="62.2744%" y="85" width="0.9025%" height="15" fill="rgb(240,187,13)"/><text x="62.5244%" y="95.50"></text></g><g><title>secp256k1::group::Affine::set_xo_var (9 samples, 1.62%)</title><rect x="63.1769%" y="117" width="1.6245%" height="15" fill="rgb(223,113,26)"/><text x="63.4269%" y="127.50"></text></g><g><title>secp256k1::field::Field::sqrt (9 samples, 1.62%)</title><rect x="63.1769%" y="101" width="1.6245%" height="15" fill="rgb(206,192,2)"/><text x="63.4269%" y="111.50"></text></g><g><title>secp256k1::field::Field::sqr_in_place (8 samples, 1.44%)</title><rect x="63.3574%" y="85" width="1.4440%" height="15" fill="rgb(241,108,4)"/><text x="63.6074%" y="95.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (4 samples, 0.72%)</title><rect x="66.0650%" y="69" width="0.7220%" height="15" fill="rgb(247,173,49)"/><text x="66.3150%" y="79.50"></text></g><g><title>subtle::black_box (2 samples, 0.36%)</title><rect x="66.4260%" y="53" width="0.3610%" height="15" fill="rgb(224,114,35)"/><text x="66.6760%" y="63.50"></text></g><g><title>secp256k1::scalar::Scalar::mul_in_place (9 samples, 1.62%)</title><rect x="65.3430%" y="101" width="1.6245%" height="15" fill="rgb(245,159,27)"/><text x="65.5930%" y="111.50"></text></g><g><title>secp256k1::scalar::Scalar::reduce_512 (8 samples, 1.44%)</title><rect x="65.5235%" y="85" width="1.4440%" height="15" fill="rgb(245,172,44)"/><text x="65.7735%" y="95.50"></text></g><g><title>subtle::black_box (1 samples, 0.18%)</title><rect x="66.7870%" y="69" width="0.1805%" height="15" fill="rgb(236,23,11)"/><text x="67.0370%" y="79.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (29 samples, 5.23%)</title><rect x="70.2166%" y="69" width="5.2347%" height="15" fill="rgb(205,117,38)"/><text x="70.4666%" y="79.50">secp25..</text></g><g><title>subtle::black_box (25 samples, 4.51%)</title><rect x="70.9386%" y="53" width="4.5126%" height="15" fill="rgb(237,72,25)"/><text x="71.1886%" y="63.50">subtl..</text></g><g><title>secp256k1::scalar::Scalar::inv_in_place (60 samples, 10.83%)</title><rect x="64.8014%" y="117" width="10.8303%" height="15" fill="rgb(244,70,9)"/><text x="65.0514%" y="127.50">secp256k1::scala..</text></g><g><title>secp256k1::scalar::Scalar::sqr_in_place (48 samples, 8.66%)</title><rect x="66.9675%" y="101" width="8.6643%" height="15" fill="rgb(217,125,39)"/><text x="67.2175%" y="111.50">secp256k1::s..</text></g><g><title>secp256k1::scalar::Scalar::reduce_512 (40 samples, 7.22%)</title><rect x="68.4116%" y="85" width="7.2202%" height="15" fill="rgb(235,36,10)"/><text x="68.6616%" y="95.50">secp256k1:..</text></g><g><title>subtle::black_box (1 samples, 0.18%)</title><rect x="75.4513%" y="69" width="0.1805%" height="15" fill="rgb(251,123,47)"/><text x="75.7013%" y="79.50"></text></g><g><title>forest_crypto::signature::ecrecover (205 samples, 37.00%)</title><rect x="38.8087%" y="165" width="37.0036%" height="15" fill="rgb(221,13,13)"/><text x="39.0587%" y="175.50">forest_crypto::signature::ecrecover</text></g><g><title>secp256k1::recover (203 samples, 36.64%)</title><rect x="39.1697%" y="149" width="36.6426%" height="15" fill="rgb(238,131,9)"/><text x="39.4197%" y="159.50">secp256k1::recover</text></g><g><title>secp256k1::ecdsa::&lt;impl secp256k1::ecmult::ECMultContext&gt;::recover_raw (203 samples, 36.64%)</title><rect x="39.1697%" y="133" width="36.6426%" height="15" fill="rgb(211,50,8)"/><text x="39.4197%" y="143.50">secp256k1::ecdsa::&lt;impl secp256k1::ecmult::ECMultContext&gt;::r..</text></g><g><title>secp256k1::scalar::Scalar::mul_in_place (1 samples, 0.18%)</title><rect x="75.6318%" y="117" width="0.1805%" height="15" fill="rgb(245,182,24)"/><text x="75.8818%" y="127.50"></text></g><g><title>secp256k1::scalar::Scalar::reduce_512 (1 samples, 0.18%)</title><rect x="75.6318%" y="101" width="0.1805%" height="15" fill="rgb(242,14,37)"/><text x="75.8818%" y="111.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (1 samples, 0.18%)</title><rect x="75.6318%" y="85" width="0.1805%" height="15" fill="rgb(246,228,12)"/><text x="75.8818%" y="95.50"></text></g><g><title>subtle::black_box (1 samples, 0.18%)</title><rect x="75.6318%" y="69" width="0.1805%" height="15" fill="rgb(213,55,15)"/><text x="75.8818%" y="79.50"></text></g><g><title>forest_crypto::signature::Signature::verify (206 samples, 37.18%)</title><rect x="38.8087%" y="181" width="37.1841%" height="15" fill="rgb(209,9,3)"/><text x="39.0587%" y="191.50">forest_crypto::signature::Signature::verify</text></g><g><title>forest_encoding::hash::blake2b_256 (1 samples, 0.18%)</title><rect x="75.8123%" y="165" width="0.1805%" height="15" fill="rgb(230,59,30)"/><text x="76.0623%" y="175.50"></text></g><g><title>blake2b_simd::State::finalize (1 samples, 0.18%)</title><rect x="75.8123%" y="149" width="0.1805%" height="15" fill="rgb(209,121,21)"/><text x="76.0623%" y="159.50"></text></g><g><title>blake2b_simd::avx2::compress1_loop (1 samples, 0.18%)</title><rect x="75.8123%" y="133" width="0.1805%" height="15" fill="rgb(220,109,13)"/><text x="76.0623%" y="143.50"></text></g><g><title>forest_message::signed_message::SignedMessage::new_from_parts (208 samples, 37.55%)</title><rect x="38.8087%" y="197" width="37.5451%" height="15" fill="rgb(232,18,1)"/><text x="39.0587%" y="207.50">forest_message::signed_message::SignedMessage::new_from_parts</text></g><g><title>forest_encoding::cbor::Cbor::cid (2 samples, 0.36%)</title><rect x="75.9928%" y="181" width="0.3610%" height="15" fill="rgb(215,41,42)"/><text x="76.2428%" y="191.50"></text></g><g><title>&lt;forest_message::unsigned_message::UnsignedMessage as serde::ser::Serialize&gt;::serialize (2 samples, 0.36%)</title><rect x="75.9928%" y="165" width="0.3610%" height="15" fill="rgb(224,123,36)"/><text x="76.2428%" y="175.50"></text></g><g><title>forest_bigint::bigint_ser::_::&lt;impl serde::ser::Serialize for forest_bigint::bigint_ser::BigIntSer&gt;::serialize (2 samples, 0.36%)</title><rect x="75.9928%" y="149" width="0.3610%" height="15" fill="rgb(240,125,3)"/><text x="76.2428%" y="159.50"></text></g><g><title>num_bigint::biguint::to_bitwise_digits_le (1 samples, 0.18%)</title><rect x="76.1733%" y="133" width="0.1805%" height="15" fill="rgb(205,98,50)"/><text x="76.4233%" y="143.50"></text></g><g><title>forest_message::unsigned_message::UnsignedMessage::to_signing_bytes (1 samples, 0.18%)</title><rect x="76.3538%" y="197" width="0.1805%" height="15" fill="rgb(205,185,37)"/><text x="76.6038%" y="207.50"></text></g><g><title>forest_encoding::cbor::Cbor::cid (1 samples, 0.18%)</title><rect x="76.3538%" y="181" width="0.1805%" height="15" fill="rgb(238,207,15)"/><text x="76.6038%" y="191.50"></text></g><g><title>forest_cid::new_from_cbor (1 samples, 0.18%)</title><rect x="76.3538%" y="165" width="0.1805%" height="15" fill="rgb(213,199,42)"/><text x="76.6038%" y="175.50"></text></g><g><title>&lt;forest_cid::mh_code::Code as multihash::multihash::MultihashDigest&gt;::digest (1 samples, 0.18%)</title><rect x="76.3538%" y="149" width="0.1805%" height="15" fill="rgb(235,201,11)"/><text x="76.6038%" y="159.50"></text></g><g><title>&lt;T as multihash::hasher::Hasher&gt;::digest (1 samples, 0.18%)</title><rect x="76.3538%" y="133" width="0.1805%" height="15" fill="rgb(207,46,11)"/><text x="76.6038%" y="143.50"></text></g><g><title>blake2b_simd::State::finalize (1 samples, 0.18%)</title><rect x="76.3538%" y="117" width="0.1805%" height="15" fill="rgb(241,35,35)"/><text x="76.6038%" y="127.50"></text></g><g><title>blake2b_simd::avx2::compress1_loop (1 samples, 0.18%)</title><rect x="76.3538%" y="101" width="0.1805%" height="15" fill="rgb(243,32,47)"/><text x="76.6038%" y="111.50"></text></g><g><title>secp256k1::Message::parse (1 samples, 0.18%)</title><rect x="76.5343%" y="181" width="0.1805%" height="15" fill="rgb(247,202,23)"/><text x="76.7843%" y="191.50"></text></g><g><title>secp256k1::scalar::Scalar::set_b32 (1 samples, 0.18%)</title><rect x="76.5343%" y="165" width="0.1805%" height="15" fill="rgb(219,102,11)"/><text x="76.7843%" y="175.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (1 samples, 0.18%)</title><rect x="76.5343%" y="149" width="0.1805%" height="15" fill="rgb(243,110,44)"/><text x="76.7843%" y="159.50"></text></g><g><title>subtle::black_box (1 samples, 0.18%)</title><rect x="76.5343%" y="133" width="0.1805%" height="15" fill="rgb(222,74,54)"/><text x="76.7843%" y="143.50"></text></g><g><title>secp256k1::SecretKey::parse_slice (1 samples, 0.18%)</title><rect x="76.7148%" y="181" width="0.1805%" height="15" fill="rgb(216,99,12)"/><text x="76.9648%" y="191.50"></text></g><g><title>secp256k1::SecretKey::parse (1 samples, 0.18%)</title><rect x="76.7148%" y="165" width="0.1805%" height="15" fill="rgb(226,22,26)"/><text x="76.9648%" y="175.50"></text></g><g><title>secp256k1::scalar::Scalar::set_b32 (1 samples, 0.18%)</title><rect x="76.7148%" y="149" width="0.1805%" height="15" fill="rgb(217,163,10)"/><text x="76.9648%" y="159.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (1 samples, 0.18%)</title><rect x="76.7148%" y="133" width="0.1805%" height="15" fill="rgb(213,25,53)"/><text x="76.9648%" y="143.50"></text></g><g><title>subtle::black_box (1 samples, 0.18%)</title><rect x="76.7148%" y="117" width="0.1805%" height="15" fill="rgb(252,105,26)"/><text x="76.9648%" y="127.50"></text></g><g><title>&lt;sha2::sha256::Sha256 as digest::FixedOutput&gt;::fixed_result (1 samples, 0.18%)</title><rect x="76.8953%" y="149" width="0.1805%" height="15" fill="rgb(220,39,43)"/><text x="77.1453%" y="159.50"></text></g><g><title>sha2::sha256::Engine256::finish (1 samples, 0.18%)</title><rect x="76.8953%" y="133" width="0.1805%" height="15" fill="rgb(229,68,48)"/><text x="77.1453%" y="143.50"></text></g><g><title>sha2::sha256_utils::compress256 (1 samples, 0.18%)</title><rect x="76.8953%" y="117" width="0.1805%" height="15" fill="rgb(252,8,32)"/><text x="77.1453%" y="127.50"></text></g><g><title>&lt;sha2::sha256::Sha256 as digest::FixedOutput&gt;::fixed_result (1 samples, 0.18%)</title><rect x="77.0758%" y="133" width="0.1805%" height="15" fill="rgb(223,20,43)"/><text x="77.3258%" y="143.50"></text></g><g><title>sha2::sha256::Engine256::finish (1 samples, 0.18%)</title><rect x="77.0758%" y="117" width="0.1805%" height="15" fill="rgb(229,81,49)"/><text x="77.3258%" y="127.50"></text></g><g><title>sha2::sha256_utils::compress256 (1 samples, 0.18%)</title><rect x="77.0758%" y="101" width="0.1805%" height="15" fill="rgb(236,28,36)"/><text x="77.3258%" y="111.50"></text></g><g><title>hmac_drbg::HmacDRBG&lt;D&gt;::generate (6 samples, 1.08%)</title><rect x="76.8953%" y="165" width="1.0830%" height="15" fill="rgb(249,185,26)"/><text x="77.1453%" y="175.50"></text></g><g><title>hmac_drbg::HmacDRBG&lt;D&gt;::update (5 samples, 0.90%)</title><rect x="77.0758%" y="149" width="0.9025%" height="15" fill="rgb(249,174,33)"/><text x="77.3258%" y="159.50"></text></g><g><title>hmac_drbg::HmacDRBG&lt;D&gt;::hmac (4 samples, 0.72%)</title><rect x="77.2563%" y="133" width="0.7220%" height="15" fill="rgb(233,201,37)"/><text x="77.5063%" y="143.50"></text></g><g><title>sha2::sha256::Engine256::input (4 samples, 0.72%)</title><rect x="77.2563%" y="117" width="0.7220%" height="15" fill="rgb(221,78,26)"/><text x="77.5063%" y="127.50"></text></g><g><title>sha2::sha256_utils::compress256 (4 samples, 0.72%)</title><rect x="77.2563%" y="101" width="0.7220%" height="15" fill="rgb(250,127,30)"/><text x="77.5063%" y="111.50"></text></g><g><title>&lt;sha2::sha256::Sha256 as digest::FixedOutput&gt;::fixed_result (2 samples, 0.36%)</title><rect x="77.9783%" y="149" width="0.3610%" height="15" fill="rgb(230,49,44)"/><text x="78.2283%" y="159.50"></text></g><g><title>sha2::sha256::Engine256::finish (2 samples, 0.36%)</title><rect x="77.9783%" y="133" width="0.3610%" height="15" fill="rgb(229,67,23)"/><text x="78.2283%" y="143.50"></text></g><g><title>sha2::sha256_utils::compress256 (2 samples, 0.36%)</title><rect x="77.9783%" y="117" width="0.3610%" height="15" fill="rgb(249,83,47)"/><text x="78.2283%" y="127.50"></text></g><g><title>hmac_drbg::HmacDRBG&lt;D&gt;::update (5 samples, 0.90%)</title><rect x="77.9783%" y="165" width="0.9025%" height="15" fill="rgb(215,43,3)"/><text x="78.2283%" y="175.50"></text></g><g><title>hmac_drbg::HmacDRBG&lt;D&gt;::hmac (3 samples, 0.54%)</title><rect x="78.3394%" y="149" width="0.5415%" height="15" fill="rgb(238,154,13)"/><text x="78.5894%" y="159.50"></text></g><g><title>sha2::sha256::Engine256::input (3 samples, 0.54%)</title><rect x="78.3394%" y="133" width="0.5415%" height="15" fill="rgb(219,56,2)"/><text x="78.5894%" y="143.50"></text></g><g><title>sha2::sha256_utils::compress256 (3 samples, 0.54%)</title><rect x="78.3394%" y="117" width="0.5415%" height="15" fill="rgb(233,0,4)"/><text x="78.5894%" y="127.50"></text></g><g><title>&lt;T as core::convert::Into&lt;U&gt;&gt;::into (1 samples, 0.18%)</title><rect x="79.7834%" y="133" width="0.1805%" height="15" fill="rgb(235,30,7)"/><text x="80.0334%" y="143.50"></text></g><g><title>secp256k1::field::Field::mul_in_place (22 samples, 3.97%)</title><rect x="81.7690%" y="117" width="3.9711%" height="15" fill="rgb(250,79,13)"/><text x="82.0190%" y="127.50">secp..</text></g><g><title>secp256k1::ecmult::ECMultGenContext::ecmult_gen (49 samples, 8.84%)</title><rect x="78.8809%" y="149" width="8.8448%" height="15" fill="rgb(211,146,34)"/><text x="79.1309%" y="159.50">secp256k1::e..</text></g><g><title>secp256k1::group::Jacobian::add_ge_in_place (43 samples, 7.76%)</title><rect x="79.9639%" y="133" width="7.7617%" height="15" fill="rgb(228,22,38)"/><text x="80.2139%" y="143.50">secp256k1::..</text></g><g><title>secp256k1::field::Field::sqr_in_place (11 samples, 1.99%)</title><rect x="85.7401%" y="117" width="1.9856%" height="15" fill="rgb(235,168,5)"/><text x="85.9901%" y="127.50">s..</text></g><g><title>secp256k1::field::Field::mul_in_place (1 samples, 0.18%)</title><rect x="87.9061%" y="133" width="0.1805%" height="15" fill="rgb(221,155,16)"/><text x="88.1561%" y="143.50"></text></g><g><title>secp256k1::field::Field::inv (13 samples, 2.35%)</title><rect x="87.7256%" y="149" width="2.3466%" height="15" fill="rgb(215,215,53)"/><text x="87.9756%" y="159.50">s..</text></g><g><title>secp256k1::field::Field::sqr_in_place (11 samples, 1.99%)</title><rect x="88.0866%" y="133" width="1.9856%" height="15" fill="rgb(223,4,10)"/><text x="88.3366%" y="143.50">s..</text></g><g><title>secp256k1::field::Field::mul_in_place (1 samples, 0.18%)</title><rect x="90.0722%" y="149" width="0.1805%" height="15" fill="rgb(234,103,6)"/><text x="90.3222%" y="159.50"></text></g><g><title>secp256k1::scalar::Scalar::mul_in_place (7 samples, 1.26%)</title><rect x="90.2527%" y="133" width="1.2635%" height="15" fill="rgb(227,97,0)"/><text x="90.5027%" y="143.50"></text></g><g><title>secp256k1::scalar::Scalar::reduce_512 (3 samples, 0.54%)</title><rect x="90.9747%" y="117" width="0.5415%" height="15" fill="rgb(234,150,53)"/><text x="91.2247%" y="127.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (3 samples, 0.54%)</title><rect x="90.9747%" y="101" width="0.5415%" height="15" fill="rgb(228,201,54)"/><text x="91.2247%" y="111.50"></text></g><g><title>subtle::black_box (2 samples, 0.36%)</title><rect x="91.1552%" y="85" width="0.3610%" height="15" fill="rgb(222,22,37)"/><text x="91.4052%" y="95.50"></text></g><g><title>secp256k1::scalar::Scalar::check_overflow (20 samples, 3.61%)</title><rect x="95.8484%" y="101" width="3.6101%" height="15" fill="rgb(237,53,32)"/><text x="96.0984%" y="111.50">secp..</text></g><g><title>subtle::black_box (14 samples, 2.53%)</title><rect x="96.9314%" y="85" width="2.5271%" height="15" fill="rgb(233,25,53)"/><text x="97.1814%" y="95.50">su..</text></g><g><title>all (554 samples, 100%)</title><rect x="0.0000%" y="725" width="100.0000%" height="15" fill="rgb(210,40,34)"/><text x="0.2500%" y="735.50"></text></g><g><title>msgpool::select (554 samples, 100.00%)</title><rect x="0.0000%" y="709" width="100.0000%" height="15" fill="rgb(241,220,44)"/><text x="0.2500%" y="719.50">msgpool::select</text></g><g><title>clone (554 samples, 100.00%)</title><rect x="0.0000%" y="693" width="100.0000%" height="15" fill="rgb(235,28,35)"/><text x="0.2500%" y="703.50">clone</text></g><g><title>start_thread (554 samples, 100.00%)</title><rect x="0.0000%" y="677" width="100.0000%" height="15" fill="rgb(210,56,17)"/><text x="0.2500%" y="687.50">start_thread</text></g><g><title>std::sys::unix::thread::Thread::new::thread_start (554 samples, 100.00%)</title><rect x="0.0000%" y="661" width="100.0000%" height="15" fill="rgb(224,130,29)"/><text x="0.2500%" y="671.50">std::sys::unix::thread::Thread::new::thread_start</text></g><g><title>&lt;alloc::boxed::Box&lt;F,A&gt; as core::ops::function::FnOnce&lt;Args&gt;&gt;::call_once (554 samples, 100.00%)</title><rect x="0.0000%" y="645" width="100.0000%" height="15" fill="rgb(235,212,8)"/><text x="0.2500%" y="655.50">&lt;alloc::boxed::Box&lt;F,A&gt; as core::ops::function::FnOnce&lt;Args&gt;&gt;::call_once</text></g><g><title>&lt;alloc::boxed::Box&lt;F,A&gt; as core::ops::function::FnOnce&lt;Args&gt;&gt;::call_once (554 samples, 100.00%)</title><rect x="0.0000%" y="629" width="100.0000%" height="15" fill="rgb(223,33,50)"/><text x="0.2500%" y="639.50">&lt;alloc::boxed::Box&lt;F,A&gt; as core::ops::function::FnOnce&lt;Args&gt;&gt;::call_once</text></g><g><title>core::ops::function::FnOnce::call_once{{vtable.shim}} (554 samples, 100.00%)</title><rect x="0.0000%" y="613" width="100.0000%" height="15" fill="rgb(219,149,13)"/><text x="0.2500%" y="623.50">core::ops::function::FnOnce::call_once{{vtable.shim}}</text></g><g><title>std::thread::Builder::spawn_unchecked::{{closure}} (554 samples, 100.00%)</title><rect x="0.0000%" y="597" width="100.0000%" height="15" fill="rgb(250,156,29)"/><text x="0.2500%" y="607.50">std::thread::Builder::spawn_unchecked::{{closure}}</text></g><g><title>std::panic::catch_unwind (554 samples, 100.00%)</title><rect x="0.0000%" y="581" width="100.0000%" height="15" fill="rgb(216,193,19)"/><text x="0.2500%" y="591.50">std::panic::catch_unwind</text></g><g><title>std::panicking::try (554 samples, 100.00%)</title><rect x="0.0000%" y="565" width="100.0000%" height="15" fill="rgb(216,135,14)"/><text x="0.2500%" y="575.50">std::panicking::try</text></g><g><title>std::panicking::try::do_call (554 samples, 100.00%)</title><rect x="0.0000%" y="549" width="100.0000%" height="15" fill="rgb(241,47,5)"/><text x="0.2500%" y="559.50">std::panicking::try::do_call</text></g><g><title>&lt;std::panic::AssertUnwindSafe&lt;F&gt; as core::ops::function::FnOnce&lt;()&gt;&gt;::call_once (554 samples, 100.00%)</title><rect x="0.0000%" y="533" width="100.0000%" height="15" fill="rgb(233,42,35)"/><text x="0.2500%" y="543.50">&lt;std::panic::AssertUnwindSafe&lt;F&gt; as core::ops::function::FnOnce&lt;()&gt;&gt;::call_once</text></g><g><title>std::thread::Builder::spawn_unchecked::{{closure}}::{{closure}} (554 samples, 100.00%)</title><rect x="0.0000%" y="517" width="100.0000%" height="15" fill="rgb(231,13,6)"/><text x="0.2500%" y="527.50">std::thread::Builder::spawn_unchecked::{{closure}}::{{closure}}</text></g><g><title>std::sys_common::backtrace::__rust_begin_short_backtrace (554 samples, 100.00%)</title><rect x="0.0000%" y="501" width="100.0000%" height="15" fill="rgb(207,181,40)"/><text x="0.2500%" y="511.50">std::sys_common::backtrace::__rust_begin_short_backtrace</text></g><g><title>test::run_test::run_test_inner::{{closure}} (554 samples, 100.00%)</title><rect x="0.0000%" y="485" width="100.0000%" height="15" fill="rgb(254,173,49)"/><text x="0.2500%" y="495.50">test::run_test::run_test_inner::{{closure}}</text></g><g><title>test::run_test_in_process (554 samples, 100.00%)</title><rect x="0.0000%" y="469" width="100.0000%" height="15" fill="rgb(221,1,38)"/><text x="0.2500%" y="479.50">test::run_test_in_process</text></g><g><title>std::panic::catch_unwind (554 samples, 100.00%)</title><rect x="0.0000%" y="453" width="100.0000%" height="15" fill="rgb(206,124,46)"/><text x="0.2500%" y="463.50">std::panic::catch_unwind</text></g><g><title>std::panicking::try (554 samples, 100.00%)</title><rect x="0.0000%" y="437" width="100.0000%" height="15" fill="rgb(249,21,11)"/><text x="0.2500%" y="447.50">std::panicking::try</text></g><g><title>std::panicking::try::do_call (554 samples, 100.00%)</title><rect x="0.0000%" y="421" width="100.0000%" height="15" fill="rgb(222,201,40)"/><text x="0.2500%" y="431.50">std::panicking::try::do_call</text></g><g><title>&lt;std::panic::AssertUnwindSafe&lt;F&gt; as core::ops::function::FnOnce&lt;()&gt;&gt;::call_once (554 samples, 100.00%)</title><rect x="0.0000%" y="405" width="100.0000%" height="15" fill="rgb(235,61,29)"/><text x="0.2500%" y="415.50">&lt;std::panic::AssertUnwindSafe&lt;F&gt; as core::ops::function::FnOnce&lt;()&gt;&gt;::call_once</text></g><g><title>&lt;alloc::boxed::Box&lt;F,A&gt; as core::ops::function::FnOnce&lt;Args&gt;&gt;::call_once (554 samples, 100.00%)</title><rect x="0.0000%" y="389" width="100.0000%" height="15" fill="rgb(219,207,3)"/><text x="0.2500%" y="399.50">&lt;alloc::boxed::Box&lt;F,A&gt; as core::ops::function::FnOnce&lt;Args&gt;&gt;::call_once</text></g><g><title>test::__rust_begin_short_backtrace (554 samples, 100.00%)</title><rect x="0.0000%" y="373" width="100.0000%" height="15" fill="rgb(222,56,46)"/><text x="0.2500%" y="383.50">test::__rust_begin_short_backtrace</text></g><g><title>core::ops::function::FnOnce::call_once (554 samples, 100.00%)</title><rect x="0.0000%" y="357" width="100.0000%" height="15" fill="rgb(239,76,54)"/><text x="0.2500%" y="367.50">core::ops::function::FnOnce::call_once</text></g><g><title>core::ops::function::FnOnce::call_once (554 samples, 100.00%)</title><rect x="0.0000%" y="341" width="100.0000%" height="15" fill="rgb(231,124,27)"/><text x="0.2500%" y="351.50">core::ops::function::FnOnce::call_once</text></g><g><title>async_std::task::builder::Builder::blocking (554 samples, 100.00%)</title><rect x="0.0000%" y="325" width="100.0000%" height="15" fill="rgb(249,195,6)"/><text x="0.2500%" y="335.50">async_std::task::builder::Builder::blocking</text></g><g><title>std::thread::local::LocalKey&lt;T&gt;::with (554 samples, 100.00%)</title><rect x="0.0000%" y="309" width="100.0000%" height="15" fill="rgb(237,174,47)"/><text x="0.2500%" y="319.50">std::thread::local::LocalKey&lt;T&gt;::with</text></g><g><title>std::thread::local::LocalKey&lt;T&gt;::with (554 samples, 100.00%)</title><rect x="0.0000%" y="293" width="100.0000%" height="15" fill="rgb(206,201,31)"/><text x="0.2500%" y="303.50">std::thread::local::LocalKey&lt;T&gt;::with</text></g><g><title>async_io::driver::block_on (554 samples, 100.00%)</title><rect x="0.0000%" y="277" width="100.0000%" height="15" fill="rgb(231,57,52)"/><text x="0.2500%" y="287.50">async_io::driver::block_on</text></g><g><title>&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll (554 samples, 100.00%)</title><rect x="0.0000%" y="261" width="100.0000%" height="15" fill="rgb(248,177,22)"/><text x="0.2500%" y="271.50">&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll</text></g><g><title>std::thread::local::LocalKey&lt;T&gt;::with (554 samples, 100.00%)</title><rect x="0.0000%" y="245" width="100.0000%" height="15" fill="rgb(215,211,37)"/><text x="0.2500%" y="255.50">std::thread::local::LocalKey&lt;T&gt;::with</text></g><g><title>&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll (554 samples, 100.00%)</title><rect x="0.0000%" y="229" width="100.0000%" height="15" fill="rgb(241,128,51)"/><text x="0.2500%" y="239.50">&lt;core::future::from_generator::GenFuture&lt;T&gt; as core::future::future::Future&gt;::poll</text></g><g><title>message_pool::msgpool::tests::create_smsg (339 samples, 61.19%)</title><rect x="38.8087%" y="213" width="61.1913%" height="15" fill="rgb(227,165,31)"/><text x="39.0587%" y="223.50">message_pool::msgpool::tests::create_smsg</text></g><g><title>key_management::wallet_helpers::sign (130 samples, 23.47%)</title><rect x="76.5343%" y="197" width="23.4657%" height="15" fill="rgb(228,167,24)"/><text x="76.7843%" y="207.50">key_management::wallet_helpers::sign</text></g><g><title>secp256k1::sign (128 samples, 23.10%)</title><rect x="76.8953%" y="181" width="23.1047%" height="15" fill="rgb(228,143,12)"/><text x="77.1453%" y="191.50">secp256k1::sign</text></g><g><title>secp256k1::ecdsa::&lt;impl secp256k1::ecmult::ECMultGenContext&gt;::sign_raw (117 samples, 21.12%)</title><rect x="78.8809%" y="165" width="21.1191%" height="15" fill="rgb(249,149,8)"/><text x="79.1309%" y="175.50">secp256k1::ecdsa::&lt;impl secp256k1..</text></g><g><title>secp256k1::scalar::Scalar::inv_in_place (54 samples, 9.75%)</title><rect x="90.2527%" y="149" width="9.7473%" height="15" fill="rgb(243,35,44)"/><text x="90.5027%" y="159.50">secp256k1::sca..</text></g><g><title>secp256k1::scalar::Scalar::sqr_in_place (47 samples, 8.48%)</title><rect x="91.5162%" y="133" width="8.4838%" height="15" fill="rgb(246,89,9)"/><text x="91.7662%" y="143.50">secp256k1::s..</text></g><g><title>secp256k1::scalar::Scalar::reduce_512 (39 samples, 7.04%)</title><rect x="92.9603%" y="117" width="7.0397%" height="15" fill="rgb(233,213,13)"/><text x="93.2103%" y="127.50">secp256k1..</text></g><g><title>subtle::black_box (3 samples, 0.54%)</title><rect x="99.4585%" y="101" width="0.5415%" height="15" fill="rgb(233,141,41)"/><text x="99.7085%" y="111.50"></text></g></svg></svg>

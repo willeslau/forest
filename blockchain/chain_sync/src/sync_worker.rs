@@ -406,6 +406,7 @@ where
 
     /// validates tipsets and adds header data to tipset tracker
     async fn validate_tipset(&self, fts: FullTipset) -> Result<(), Error> {
+        // let guard = pprof::ProfilerGuard::new(100).unwrap();
         if fts.key() == self.genesis.key() {
             debug!("Skipping tipset validation for genesis");
             return Ok(());
@@ -442,6 +443,10 @@ where
             "Successfully validated tipset {:?} at epoch: {}",
             fts_key, epoch
         );
+        // if let Ok(report) = guard.report().build() {
+        //     let file = std::fs::File::create("flamegraph.svg").unwrap();
+        //     report.flamegraph(file).unwrap();
+        // };
         Ok(())
     }
 
