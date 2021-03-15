@@ -52,7 +52,7 @@ const NETWORK_DEFAULT: Network = Network::Mainnet;
 #[derive(PartialEq, Eq, Clone, Debug, Hash, Copy)]
 pub struct Address {
     network: Network,
-    payload: Payload,
+    pub payload: Payload,
 }
 
 impl Address {

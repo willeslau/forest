@@ -127,10 +127,10 @@ where
                 create_message_chains(&self.api, &actor, &mset, &base_fee, &target_tipset).await?,
             );
         }
-
+        
         // 2. Sort the chains by gas perf and gas reward
         chains.sort_by(|a, b| b.compare(&a));
-
+        
         if !chains.is_empty() && chains[0].curr().gas_perf < 0.0 {
             warn!(
                 "all messages in mpool have non-positive gas performance {}",
@@ -159,7 +159,6 @@ where
             i += 1;
         }
 
-
         // 4. Compute effective performance for each chain, based on the partition they fall into
         //    The effective performance is the gas_perf of the chain * block probability
         let block_prob = crate::block_probabilities(ticket_quality);
@@ -176,28 +175,16 @@ where
             // TODO verify
             chain.set_null_effective_perf();
         }
-        
-        // for i in &chains {
-        //     dbg!(&i.chain[0].msgs[0].message.sequence);
-        //     dbg!(&i.chain[0].msgs[1].message.sequence);
-        //     dbg!(&i.chain[0].msgs[2].message.sequence);
-        // }
 
         // 5. Resort the chains based on effective performance
         chains.sort_by(|a, b| a.cmp_effective(b));
-
-        // for i in &chains {
-        //     dbg!(&i.chain[0].msgs[0].message.sequence);
-        //     dbg!(&i.chain[0].msgs[1].message.sequence);
-        //     dbg!(&i.chain[0].msgs[2].message.sequence);
-        // }
 
         // 6. Merge the head chains to produce the list of messages selected for inclusion
         //    subject to the residual gas limit
         //    When a chain is merged in, all its previous dependent chains *must* also be
         //    merged in or we'll have a broken block
+        // dbg!(gas_limit);
         let mut last = chains.len();
-        // dbg!(last);
         for i in 0..chains.len() {
             let chain = &mut chains[i];
             // did we run out of performing chains?
@@ -212,13 +199,12 @@ where
 
             // compute the dependencies that must be merged and the gas limit including deps
             let mut chain_gas_limit = chain.curr().gas_limit;
-            // dbg!(chain_gas_limit);
-            // std::process::exit(244);
             let mut chain_deps = vec![];
-            while let Some(chain_node) = chain.prev() {
+            while let Some(chain_node) = chain.move_backward() {
                 if !chain_node.merged {
                     chain_deps.push(chain_node.clone());
                     chain_gas_limit += chain_node.gas_limit;
+                    dbg!(chain_gas_limit);
                 }
             }
 
@@ -230,21 +216,21 @@ where
                     chain_node.merged = true;
                 });
 
-                // dbg!(chain_deps.len());
-
                 chain.curr_mut().merged = true;
                 // adjust the effective performance for all subsequent chains
                 if let Some(next) = chain.next_mut() {
                     if next.eff_perf > 0.0 {
                         next.eff_perf += next.parent_offset;
-                        let mut next = chain.next();
-                        while next.is_some() && next.unwrap().eff_perf > 0.0 {
-                            chain.set_eff_perf();
-                            next = chain.move_forward();
+                        // let mut next = chain.move_forward();
+                        while let Some(next) = chain.move_forward() {
+                            if next.eff_perf > 0.0 {
+                                chain.set_eff_perf();
+                            }
                         }
                     }
                 }
-                result.append(&mut chain.curr_mut().msgs);
+
+                result.extend(chain.curr().msgs.clone());
                 gas_limit -= chain_gas_limit;
 
                 // re-sort to account for already merged chains and effective performance adjustments
@@ -260,10 +246,9 @@ where
             break;
         }
 
-        // for i in &result {
-        //     dbg!(i.message().sequence);
-        // }
-
+        dbg!(gas_limit);
+        dbg!(last);
+        dbg!(chains.len());
         // 7. We have reached the edge of what can fit wholesale; if we still hae available
         //    gas_limit to pack some more chains, then trim the last chain and push it down.
         //    Trimming invalidaates subsequent dependent chains so that they can't be selected
@@ -727,91 +712,161 @@ mod test_selection {
         }
     }
 
-    // #[async_std::test]
-    // async fn test_optimal_msg_selection2() {
-    //     // this test uses two actors sending messages to each other, with the first
-    //     // actor paying (much) higher gas premium than the second.
-    //     // We select with a low ticket quality; the chain depenent merging algorithm should pick
-    //     // messages from the second actor from the start
-    //     let mpool = make_test_mpool();
+    #[async_std::test]
+    async fn test_optimal_msg_selection2() {
+        // this test uses two actors sending messages to each other, with the first
+        // actor paying (much) higher gas premium than the second.
+        // We select with a low ticket quality; the chain depenent merging algorithm should pick
+        // messages from the second actor from the start
+        let mpool = make_test_mpool();
 
-    //     // create two actors
-    //     let mut w1 = Wallet::new(MemKeyStore::new());
-    //     let a1 = w1.generate_addr(SignatureType::Secp256k1).unwrap();
-    //     let mut w2 = Wallet::new(MemKeyStore::new());
-    //     let a2 = w2.generate_addr(SignatureType::Secp256k1).unwrap();
+        // create two actors
+        let mut w1 = Wallet::new(MemKeyStore::new());
+        let a1 = w1.generate_addr(SignatureType::Secp256k1).unwrap();
+        let mut w2 = Wallet::new(MemKeyStore::new());
+        let a2 = w2.generate_addr(SignatureType::Secp256k1).unwrap();
 
-    //     // create a block
-    //     let b1 = mock_block(1, 1);
-    //     // add block to tipset
-    //     let ts = Tipset::new(vec![b1.clone()]).unwrap();
+        // create a block
+        let b1 = mock_block(1, 1);
+        // add block to tipset
+        let ts = Tipset::new(vec![b1.clone()]).unwrap();
 
-    //     let api = mpool.api.clone();
-    //     let bls_sig_cache = mpool.bls_sig_cache.clone();
-    //     let pending = mpool.pending.clone();
-    //     let cur_tipset = mpool.cur_tipset.clone();
-    //     let repub_trigger = Arc::new(mpool.repub_trigger.clone());
-    //     let republished = mpool.republished.clone();
+        let api = mpool.api.clone();
+        let bls_sig_cache = mpool.bls_sig_cache.clone();
+        let pending = mpool.pending.clone();
+        let cur_tipset = mpool.cur_tipset.clone();
+        let repub_trigger = Arc::new(mpool.repub_trigger.clone());
+        let republished = mpool.republished.clone();
 
-    //     head_change(
-    //         api.as_ref(),
-    //         bls_sig_cache.as_ref(),
-    //         repub_trigger.clone(),
-    //         republished.as_ref(),
-    //         pending.as_ref(),
-    //         cur_tipset.as_ref(),
-    //         Vec::new(),
-    //         vec![Tipset::new(vec![b1]).unwrap()],
-    //     )
-    //     .await
-    //     .unwrap();
+        head_change(
+            api.as_ref(),
+            bls_sig_cache.as_ref(),
+            repub_trigger.clone(),
+            republished.as_ref(),
+            pending.as_ref(),
+            cur_tipset.as_ref(),
+            Vec::new(),
+            vec![Tipset::new(vec![b1]).unwrap()],
+        )
+        .await
+        .unwrap();
 
-    //     api.write()
-    //     .await
-    //     .set_state_balance_raw(&a1, types::DefaultNetworkParams::from_fil(1));
+        
 
-    //     api.write()
-    //     .await
-    //     .set_state_balance_raw(&a2, types::DefaultNetworkParams::from_fil(1));
+        api.write()
+        .await
+        .set_state_balance_raw(&a1, types::DefaultNetworkParams::from_fil(1));
 
-    //     let n_msgs = 5 * types::BLOCK_GAS_LIMIT / TEST_GAS_LIMIT;
-    //     for i in 0..n_msgs as usize {
-    //         let bias = (n_msgs as usize - i) / 3;
-    //         let m = create_smsg(&a2, &a1, &mut w1, i as u64, TEST_GAS_LIMIT, (200000 + i % 3 + bias) as u64);
-    //         mpool.add(m).await.unwrap();
-    //         let m = create_smsg(&a1, &a2, &mut w2, i as u64, TEST_GAS_LIMIT, (190000 + i % 3 + bias) as u64);
-    //         mpool.add(m).await.unwrap();
-    //     }
+        api.write()
+        .await
+        .set_state_balance_raw(&a2, types::DefaultNetworkParams::from_fil(1));
 
-    //     let msgs = mpool.select_messages(&ts, 0.1).await.unwrap();
+        let n_msgs = 5 * types::BLOCK_GAS_LIMIT / TEST_GAS_LIMIT;
+        for i in 0..n_msgs as usize {
+            let bias = (n_msgs as usize - i) / 3;
+            let m = create_smsg(&a2, &a1, &mut w1, i as u64, TEST_GAS_LIMIT, (200000 + i % 3 + bias) as u64);
+            mpool.add(m).await.unwrap();
+            let m = create_smsg(&a1, &a2, &mut w2, i as u64, TEST_GAS_LIMIT, (190000 + i % 3 + bias) as u64);
+            mpool.add(m).await.unwrap();
+        }
 
-    //     let expected_msgs = types::BLOCK_GAS_LIMIT / TEST_GAS_LIMIT;
-    //     assert_eq!(msgs.len(), expected_msgs as usize, "Expected {} messages, but got {}", expected_msgs, msgs.len());
+        let msgs = mpool.select_messages(&ts, 0.1).await.unwrap();
 
-    //     let mut n_from1 = 0;
-    //     let mut n_from2 = 0;
-    //     let mut next_nonce1 = 0;
-    //     let mut next_nonce2 = 0;
-    //     for m in msgs {
-    //         if m.message.from() == &a1 {
-    //             if m.message.sequence != next_nonce1 {
-    //                 panic!("sdlkfjsdlk");
-    //             }
-    //             next_nonce1 += 1;
-    //             n_from1 += 1;
-    //         } else {
-    //             if m.message.sequence != next_nonce2 {
-    //                 panic!("sdlgshd");
-    //             }
-    //             next_nonce2 += 1;
-    //             n_from2 += 1;
-    //         }
-    //     }
+        let expected_msgs = types::BLOCK_GAS_LIMIT / TEST_GAS_LIMIT;
+        assert_eq!(msgs.len(), expected_msgs as usize, "Expected {} messages, but got {}", expected_msgs, msgs.len());
 
-    //     if n_from1 > n_from2 {
-    //         panic!("Expected more msgs from a2 than a1");
-    //     }
-    // }
+        let mut n_from1 = 0;
+        let mut n_from2 = 0;
+        let mut next_nonce1 = 0;
+        let mut next_nonce2 = 0;
+        for m in msgs {
+            if m.message.from() == &a1 {
+                if m.message.sequence != next_nonce1 {
+                    panic!("oops");
+                }
+                next_nonce1 += 1;
+                n_from1 += 1;
+            } else {
+                if m.message.sequence != next_nonce2 {
+                    panic!("oops");
+                }
+                next_nonce2 += 1;
+                n_from2 += 1;
+            }
+        }
+
+        if n_from1 > n_from2 {
+            panic!("Expected more msgs from a2 than a1");
+        }
+    }
+
+    #[async_std::test]
+    async fn test_optimal_msg_selection3() {
+        // this test uses 10 actors sending a block of messages to each other, with the the first
+        // actors paying higher gas premium than the subsequent actors.
+        // We select with a low ticket quality; the chain depenent merging algorithm should pick
+    	// messages from the median actor from the start
+        let mpool = make_test_mpool();
+
+        let n_actors: usize = 10;
+
+        let mut actors = vec![];
+        let mut wallets = vec![];
+
+        for i in 0..n_actors {
+            let mut w = Wallet::new(MemKeyStore::new());
+            let a = w.generate_addr(SignatureType::Secp256k1).unwrap();
+            actors.push(a);
+            wallets.push(w);
+        }
+
+        // create a block
+        let b1 = mock_block(1, 1);
+        // add block to tipset
+        let ts = Tipset::new(vec![b1.clone()]).unwrap();
+
+        
+        let api = mpool.api.clone();
+        let bls_sig_cache = mpool.bls_sig_cache.clone();
+        let pending = mpool.pending.clone();
+        let cur_tipset = mpool.cur_tipset.clone();
+        let repub_trigger = Arc::new(mpool.repub_trigger.clone());
+        let republished = mpool.republished.clone();
+
+        head_change(
+            api.as_ref(),
+            bls_sig_cache.as_ref(),
+            repub_trigger.clone(),
+            republished.as_ref(),
+            pending.as_ref(),
+            cur_tipset.as_ref(),
+            Vec::new(),
+            vec![Tipset::new(vec![b1]).unwrap()],
+        )
+        .await
+        .unwrap();
+
+        for a in &actors {
+            api.write()
+            .await
+            .set_state_balance_raw(&a, types::DefaultNetworkParams::from_fil(1));
+        }
+
+        let n_msgs: usize = types::BLOCK_GAS_LIMIT as usize / TEST_GAS_LIMIT as usize + 1;
+        for  i in 0..n_msgs {
+            for j in 0..n_actors {
+                let premium = 500000 + 10000*(n_actors -j) + (30*n_actors)/(n_msgs+2*i) + i%3;
+                let m = create_smsg(&actors[j as usize], &actors[j%n_actors], &mut wallets[j], i as u64, TEST_GAS_LIMIT, premium as u64);
+                mpool.add(m).await.unwrap();
+            }
+        }
+
+        let msgs = mpool.select_messages(&ts, 0.1).await.unwrap();
+        let expected_msgs = types::BLOCK_GAS_LIMIT / TEST_GAS_LIMIT;
+        
+        // TODO fix test case
+        assert_eq!(expected_msgs as usize, msgs.len(), "expected {} messages, but got {}", expected_msgs, msgs.len());
+    }
 
     #[async_std::test]
     async fn basic_message_selection() {
