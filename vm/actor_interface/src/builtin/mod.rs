@@ -10,6 +10,7 @@ pub mod multisig;
 pub mod power;
 pub mod reward;
 pub mod system;
+pub mod paych;
 
 use cid::Cid;
 use num_bigint::BigInt;

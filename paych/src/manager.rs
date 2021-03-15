@@ -3,7 +3,7 @@
 
 use super::{ChannelInfo, Error, PaychStore, StateAccessor};
 use crate::{ChannelAccessor, PaychFundsRes, VoucherInfo, DIR_INBOUND};
-use actor::paych::{Method::Collect, Method::Settle, SignedVoucher};
+use actor::paych::{Method, SignedVoucher};
 use address::Address;
 use async_std::sync::{Arc, RwLock};
 use async_std::task;
@@ -308,7 +308,7 @@ where
             .to(ch)
             .from(ci.control)
             .value(BigInt::default())
-            .method_num(Settle as u64)
+            .method_num(Method::Settle as u64)
             .build()
             .map_err(Error::Other)?;
 
@@ -333,7 +333,7 @@ where
             .to(ch)
             .from(ci.control)
             .value(BigInt::default())
-            .method_num(Collect as u64)
+            .method_num(Method::Collect as u64)
             .build()
             .map_err(Error::Other)?;
 
