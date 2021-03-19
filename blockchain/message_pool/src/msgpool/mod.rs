@@ -10,6 +10,7 @@ pub(crate) mod utils;
 
 use super::errors::Error;
 use crate::msg_chain::{MsgChain, MsgChainNode};
+use crate::msg_chain_fixed::{MsgChainFixed, MsgChainNodeFixed};
 use crate::msg_pool::MsgSet;
 use crate::msg_pool::{add_helper, remove};
 use crate::provider::Provider;
@@ -168,6 +169,173 @@ where
 }
 
 // This helper creates chains of messages for the passed actor
+async fn test_create_message_chains<T>(
+    api: &RwLock<T>,
+    actor: &Address,
+    mset: &HashMap<u64, SignedMessage>,
+    base_fee: &BigInt,
+    tipset: &Tipset,
+) -> Result<MsgChainFixed, Error>
+where
+    T: Provider,
+{
+    // collect all messages and sort
+    let mut msgs: Vec<SignedMessage> = mset.values().cloned().collect();
+    // sort by nonce
+    msgs.sort_by_key(|msg| msg.sequence());
+
+    // sanity checks:
+    // - there can be no gaps in nonces, starting from the current actor nonce
+    //   if there is a gap, drop messages after the gap, we can't include them
+    // - all messages must have minimum gas and the total gas for the candidate messages
+    //   cannot exceed the block limit; drop all messages that exceed the limit
+    // - the total gasReward cannot exceed the actor's balance; drop all messages that exceed
+    //   the balance
+    let a = api.read().await.get_actor_after(&actor, &tipset)?;
+
+    let mut cur_seq = a.sequence;
+    let mut balance = a.balance;
+    let mut gas_limit = 0;
+
+    let mut skip = 0;
+    let mut i = 0;
+    let mut rewards = Vec::with_capacity(msgs.len());
+    while i < msgs.len() {
+        let m = &msgs[i];
+        if m.sequence() < cur_seq {
+            warn!(
+                "encountered message from actor {} with nonce {} less than the current nonce {}",
+                actor,
+                m.sequence(),
+                cur_seq
+            );
+            skip += 1;
+            i += 1;
+            continue;
+        }
+        if m.sequence() != cur_seq {
+            break;
+        }
+        cur_seq += 1;
+        let min_gas = interpreter::price_list_by_epoch(tipset.epoch())
+            .on_chain_message(m.marshal_cbor()?.len())
+            .total();
+        if m.gas_limit() < min_gas {
+            break;
+        }
+        gas_limit += m.gas_limit();
+
+        if gas_limit > types::BLOCK_GAS_LIMIT {
+            break;
+        }
+        let required = m.required_funds();
+        if balance < required {
+            break;
+        }
+        balance -= required;
+        let value = m.value();
+        if &balance >= value {
+            balance -= value;
+        }
+
+        let gas_reward = get_gas_reward(&m, base_fee);
+        rewards.push(gas_reward);
+        i += 1;
+    }
+
+    // check we have a sane set of messages to construct the chains
+    let msgs = if i > skip {
+        msgs[skip..i].to_vec()
+    } else {
+        return Ok(MsgChainFixed::default());
+    };
+
+    let new_chain = |m: SignedMessage, i: usize| -> MsgChainNodeFixed {
+        let gl = m.gas_limit();
+        let node = MsgChainNodeFixed {
+            msgs: vec![m],
+            gas_reward: rewards[i].clone(),
+            gas_limit: gl,
+            gas_perf: get_gas_perf(&rewards[i], gl),
+            eff_perf: 0.0,
+            bp: 0.0,
+            parent_offset: 0.0,
+            valid: true,
+            merged: false,
+            // TODO can possibly accept next and prev indexes while creating
+            next: None,
+            prev: None
+        };
+        node
+    };
+
+    // let mut chains = Vec::new();
+    let mut chains = MsgChainFixed::default();
+    let mut cur_chain = MsgChainNodeFixed::new();
+
+    for (i, m) in msgs.into_iter().enumerate() {
+        if i == 0 {
+            cur_chain = new_chain(m, i);
+            continue;
+        }
+        let gas_reward = cur_chain.gas_reward.clone() + &rewards[i];
+        let gas_limit = cur_chain.gas_limit + m.gas_limit();
+        let gas_perf = get_gas_perf(&gas_reward, gas_limit);
+
+        // try to add the message to the current chain -- if it decreases the gasPerf, then make a
+        // new chain
+        if gas_perf < cur_chain.gas_perf {
+            chains.chain.push(cur_chain.clone());
+            cur_chain = new_chain(m, i);
+        } else {
+            cur_chain.msgs.push(m);
+            cur_chain.gas_reward = gas_reward;
+            cur_chain.gas_limit = gas_limit;
+            cur_chain.gas_perf = gas_perf;
+        }
+    }
+    chains.chain.push(cur_chain);
+
+    // merge chains to maintain the invariant
+    loop {
+        let mut merged = 0;
+        for i in (1..chains.chain.len()).rev() {
+            if chains.chain[i].gas_perf >= chains.chain[i-1].gas_perf {
+                let msgs = chains.chain[i].msgs.clone();
+                chains.chain[i-1].msgs.extend(msgs);
+                let gas_reward = chains.chain[i].gas_reward.clone();
+                chains.chain[i-1].gas_reward += gas_reward;
+                let gas_limit = chains.chain[i].gas_limit.clone();
+                chains.chain[i-1].gas_limit += gas_limit;
+
+                let gas_reward = chains.chain[i-1].gas_reward.clone();
+                let gas_limit = chains.chain[i-1].gas_limit.clone();
+                chains.chain[i-1].gas_perf = get_gas_perf(&gas_reward, gas_limit);
+                chains.chain[i].valid = false;
+                merged += 1;
+            }
+        }
+        if merged == 0 {
+            break;
+        }
+
+        chains.chain.retain(|c| c.valid);
+    }
+
+    // link dependant chains
+    for i in 0..chains.chain.len()-1 {
+        chains.chain[i].next = Some(i + 1);
+    }
+
+    for i in (1..chains.chain.len()).rev() {
+        chains.chain[i].prev = Some(i - 1);
+    }
+
+    // No need to link the chains because its linked for free. Update: That's not the case
+    Ok(chains)
+}
+
+// This helper creates chains of messages for the passed actor
 async fn create_message_chains<T>(
     api: &RwLock<T>,
     actor: &Address,
@@ -296,30 +464,28 @@ where
     loop {
         let mut merged = 0;
         for i in (1..chains.len()).rev() {
-            let (head, tail) = chains.split_at_mut(i);
-            if tail[0].curr().gas_perf >= head.last().unwrap().curr().gas_perf {
-                let mut chain_a_msgs = tail[0].curr().msgs.clone();
-                head.last_mut()
-                    .unwrap()
-                    .curr_mut()
-                    .msgs
-                    .append(&mut chain_a_msgs);
-                head.last_mut().unwrap().curr_mut().gas_reward += &tail[0].curr().gas_reward;
-                head.last_mut().unwrap().curr_mut().gas_limit +=
-                    head.last().unwrap().curr().gas_limit;
-                head.last_mut().unwrap().curr_mut().gas_perf = get_gas_perf(
-                    &head.last().unwrap().curr().gas_reward,
-                    head.last().unwrap().curr().gas_limit,
-                );
-                tail[0].curr_mut().valid = false;
+            if chains[i].curr().gas_perf >= chains[i-1].curr().gas_perf {
+                let msgs = chains[i].curr().msgs.clone();
+                chains[i-1].curr_mut().msgs.extend(msgs);
+                let gas_reward = chains[i].curr().gas_reward.clone();
+                chains[i-1].curr_mut().gas_reward += gas_reward;
+                let gas_limit = chains[i].curr().gas_limit.clone();
+                chains[i-1].curr_mut().gas_limit += gas_limit;
+
+                let gas_reward = chains[i-1].curr().gas_reward.clone();
+                let gas_limit = chains[i-1].curr().gas_limit.clone();
+                chains[i-1].curr_mut().gas_perf = get_gas_perf(&gas_reward, gas_limit);
+                chains[i].curr_mut().valid = false;
                 merged += 1;
             }
         }
         if merged == 0 {
             break;
         }
+
         chains.retain(|c| c.curr().valid);
     }
+
     // No need to link the chains because its linked for free
     Ok(chains)
 }
@@ -473,7 +639,6 @@ pub mod tests {
         let msg_signing_bytes = umsg.to_signing_bytes();
         let sig = wallet.sign(&from, msg_signing_bytes.as_slice()).unwrap();
         let smsg = SignedMessage::new_from_parts(umsg, sig).unwrap();
-        // smsg.verify().unwrap();
         smsg
     }
 

@@ -6,6 +6,7 @@ mod config;
 mod errors;
 mod msg_chain;
 mod msgpool;
+mod msg_chain_fixed;
 
 pub use self::block_prob::*;
 pub use self::config::*;
