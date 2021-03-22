@@ -322,14 +322,16 @@ where
         chains.chain.retain(|c| c.valid);
     }
 
-    // link dependant chains
-    for i in 0..chains.chain.len()-1 {
-        chains.chain[i].next = Some(i + 1);
-    }
+    chains.link();
 
-    for i in (1..chains.chain.len()).rev() {
-        chains.chain[i].prev = Some(i - 1);
-    }
+    // // link dependant chains
+    // for i in 0..chains.chain.len()-1 {
+    //     chains.chain[i].next = Some(i + 1);
+    // }
+
+    // for i in (1..chains.chain.len()).rev() {
+    //     chains.chain[i].prev = Some(i - 1);
+    // }
 
     // No need to link the chains because its linked for free. Update: That's not the case
     Ok(chains)

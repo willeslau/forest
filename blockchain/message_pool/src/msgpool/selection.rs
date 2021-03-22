@@ -131,11 +131,16 @@ where
                 test_create_message_chains(&self.api, &actor, &mset, &base_fee, &target_tipset).await?.chain,
             );
         }
+
+        // This is simply to retain pointers to prev and next nodes
+        // for each elements in the chain, as sorting the pointer
+        let mut orig_chains = MsgChainFixed::new(chains.chain.clone());
         
         // NOTE: verified messaged from both impls to be of 958 post create_message_chains
         // 2. Sort the chains by gas perf and gas reward
         // TODO check the sort order
         chains.chain.sort_by(|a, b| b.compare(&a));
+        
         
         if !chains.chain.is_empty() && chains.chain[0].gas_perf < 0.0 {
             warn!(
@@ -194,12 +199,9 @@ where
         // restore back in MsgChain form
         let mut chains = MsgChainFixed::new(chains);
 
-        // dbg!(&chains);
-
         // nullify the effective performance of chains that don't fit in any partition
-        for chain in chains.chain.iter_mut().skip(eff_chains) {
-            // TODO verify
-            chain.set_null_effective_perf();
+        for i in eff_chains..chains.chain.len() {
+            chains.chain[i].set_null_effective_perf();
         }
 
         // 5. Resort the chains based on effective performance
@@ -225,23 +227,26 @@ where
             // let mut chain_gas_limit = chain.gas_limit;
             let mut chain_deps = vec![];
             // try merging any previous chains
-            let mut prev_idx = i;
+            let mut prev_idx = chains.chain[i].prev;
             // FIXME: running into a loop
             // Case: for index 1 (not merged) -> prev pointer is 477 (not merged) -> whose prev pointer is again 1
             // So we keep looping.
             loop {
-                // basically loop till we find a merged chain and keep pushing them to chain_deps
-                if let Some(idx) = chains.chain[prev_idx].prev {
-                    if !chains.chain[idx].merged {
-                        prev_idx = idx;
-                        chain_deps.push(chains.chain[prev_idx].clone());
-                        chain_gas_limit += chains.chain[prev_idx].gas_limit;
+                // basically loop till we find a merged chain or reach the
+                // first node in the original chain list and keep pushing them to chain_deps
+                if let Some(idx) = prev_idx {
+                    let prev_node = &mut orig_chains.chain[idx];
+                    if !prev_node.merged {
+                        chain_deps.push(chains.chain[idx].clone());
+                        chain_gas_limit += chains.chain[idx].gas_limit;
+                        // move back
+                        prev_idx = prev_node.prev.clone();
                     }
                 } else {
                     break;
                 }
             }
-            
+
             // does it all fit in the block?
             if chain_gas_limit <= gas_limit {
                 // include it together with all dependencies
@@ -251,11 +256,28 @@ where
                 });
 
                 chains.chain[i].merged = true;
+                let mut next_node_eff = None;
                 // adjust the effective performance for all subsequent chains
-                // FIXME: need to switch to loop above
-                if let Some(next) = chains.next_mut() {
-                    if next.eff_perf > 0.0 {
-                        next.eff_perf += next.parent_offset;
+                if let Some(next_idx) = chains.chain[i].next {
+                    let next_node = &mut orig_chains.chain[next_idx];
+                    if next_node.eff_perf > 0.0 {
+                        // problem: older link values are all zero
+                        next_node.eff_perf += next_node.parent_offset;
+                        next_node_eff = next_node.next; // use this for the loop below
+                    }
+                }
+                
+                // this loop is split as separate to get around the
+                // restrictions with the borrow checker
+                loop {
+                    if let Some(next_node_idx) = next_node_eff {
+                        let next = &mut orig_chains.chain[next_node_idx];
+                        if next.eff_perf > 0.0 {
+                            chains.set_eff_perf(next);
+                        }
+                        next_node_eff = next.next;
+                    } else {
+                        break;
                     }
                 }
 
@@ -278,171 +300,171 @@ where
         dbg!(gas_limit);
         dbg!(last);
         dbg!(chains.chain.len());
-        // 7. We have reached the edge of what can fit wholesale; if we still hae available
-        //    gas_limit to pack some more chains, then trim the last chain and push it down.
-        //    Trimming invalidaates subsequent dependent chains so that they can't be selected
-        //    as their dependency cannot be (fully) included.
-        //    We do this in a loop because the blocks might have been inordinately large and
-        //    we might have to do it multiple times to satisfy tail packing
-        'tail_loop: while gas_limit >= gas_guess::MIN_GAS && last < chains.chain.len() {
-            // trim if necessary
-            if chains.chain[last].gas_limit > gas_limit {
-                chains.trim(gas_limit, &base_fee, last);
-            }
+        // // 7. We have reached the edge of what can fit wholesale; if we still hae available
+        // //    gas_limit to pack some more chains, then trim the last chain and push it down.
+        // //    Trimming invalidaates subsequent dependent chains so that they can't be selected
+        // //    as their dependency cannot be (fully) included.
+        // //    We do this in a loop because the blocks might have been inordinately large and
+        // //    we might have to do it multiple times to satisfy tail packing
+        // 'tail_loop: while gas_limit >= gas_guess::MIN_GAS && last < chains.chain.len() {
+        //     // trim if necessary
+        //     if chains.chain[last].gas_limit > gas_limit {
+        //         chains.trim(gas_limit, &base_fee, last);
+        //     }
 
-            // push down if it hasn't been invalidated
-            if chains.chain[last].valid {
-                for i in last..chains.chain.len() - 1 {
-                    // TODO do we check for equality?
-                    if chains.chain[i].cmp_effective(&chains.chain[i + 1]) == Ordering::Equal {
-                        break;
-                    }
+        //     // push down if it hasn't been invalidated
+        //     if chains.chain[last].valid {
+        //         for i in last..chains.chain.len() - 1 {
+        //             // TODO do we check for equality?
+        //             if chains.chain[i].cmp_effective(&chains.chain[i + 1]) == Ordering::Equal {
+        //                 break;
+        //             }
 
-                    chains.chain.swap(i, i + 1);
-                }
-            }
+        //             chains.chain.swap(i, i + 1);
+        //         }
+        //     }
 
-            // select the next (valid and fitting) chain and its dependencies for inclusion
-            for i in last..chains.chain.len() {
-                // let chain = &mut chains.chain[i];
-                // has the chain been invalidated?
-                if !chains.chain[i].valid {
-                    continue;
-                }
+        //     // select the next (valid and fitting) chain and its dependencies for inclusion
+        //     for i in last..chains.chain.len() {
+        //         // let chain = &mut chains.chain[i];
+        //         // has the chain been invalidated?
+        //         if !chains.chain[i].valid {
+        //             continue;
+        //         }
 
-                // has it already been merged?
-                if chains.chain[i].merged {
-                    continue;
-                }
+        //         // has it already been merged?
+        //         if chains.chain[i].merged {
+        //             continue;
+        //         }
 
-                // if gasPerf < 0 we have no more profitable chains
-                if chains.chain[i].gas_perf < 0.0 {
-                    break 'tail_loop;
-                }
+        //         // if gasPerf < 0 we have no more profitable chains
+        //         if chains.chain[i].gas_perf < 0.0 {
+        //             break 'tail_loop;
+        //         }
 
-                // compute the dependencies that must be merged and the gas limit including deps
-                let mut chain_gas_limit = chains.chain[i].gas_limit;
-                let mut dep_gas_limit: i64 = 0;
-                let mut chain_deps = vec![];
-                // FIXME: this needs fix as well
-                {
-                    while let Some(chain_node) = chains.move_backward() {
-                        if !chain_node.merged {
-                            chain_deps.push(chain_node.clone());
-                            chain_gas_limit += chain_node.gas_limit;
-                            dep_gas_limit += chain_node.gas_limit;
-                        }
-                    }
-                }
+        //         // compute the dependencies that must be merged and the gas limit including deps
+        //         let mut chain_gas_limit = chains.chain[i].gas_limit;
+        //         let mut dep_gas_limit: i64 = 0;
+        //         let mut chain_deps = vec![];
+        //         // FIXME: this needs fix as well
+        //         {
+        //             while let Some(chain_node) = chains.move_backward() {
+        //                 if !chain_node.merged {
+        //                     chain_deps.push(chain_node.clone());
+        //                     chain_gas_limit += chain_node.gas_limit;
+        //                     dep_gas_limit += chain_node.gas_limit;
+        //                 }
+        //             }
+        //         }
 
-                // does it all fit in a block
-                if chain_gas_limit <= gas_limit {
-                    // include it together with all dependencies
-                    for i in (0..=chain_deps.len() - 1).rev() {
-                        if let Some(cur_chain) = chain_deps.get_mut(i) {
-                            cur_chain.merged = true;
-                            result.extend(cur_chain.msgs.clone());
-                        }
-                    }
+        //         // does it all fit in a block
+        //         if chain_gas_limit <= gas_limit {
+        //             // include it together with all dependencies
+        //             for i in (0..=chain_deps.len() - 1).rev() {
+        //                 if let Some(cur_chain) = chain_deps.get_mut(i) {
+        //                     cur_chain.merged = true;
+        //                     result.extend(cur_chain.msgs.clone());
+        //                 }
+        //             }
 
-                    chains.chain[i].merged = true;
-                    result.extend(chains.chain[i].msgs.clone());
-                    gas_limit -= chain_gas_limit;
-                    continue;
-                }
+        //             chains.chain[i].merged = true;
+        //             result.extend(chains.chain[i].msgs.clone());
+        //             gas_limit -= chain_gas_limit;
+        //             continue;
+        //         }
 
-                // it doesn't all fit; now we have to take into account the dependent chains before
-                // making a decision about trimming or invalidating.
-                // if the dependencies exceed the gas limit, then we must invalidate the chain
-                // as it can never be included.
-                // Otherwise we can just trim and continue
-                if dep_gas_limit > gas_limit {
-                    chains.invalidate_next_nodes(i);
-                    last += i + 1;
-                    continue 'tail_loop;
-                }
+        //         // it doesn't all fit; now we have to take into account the dependent chains before
+        //         // making a decision about trimming or invalidating.
+        //         // if the dependencies exceed the gas limit, then we must invalidate the chain
+        //         // as it can never be included.
+        //         // Otherwise we can just trim and continue
+        //         if dep_gas_limit > gas_limit {
+        //             chains.invalidate_next_nodes(i);
+        //             last += i + 1;
+        //             continue 'tail_loop;
+        //         }
 
-                // dependencies fit, just trim it
-                chains.trim(gas_limit - dep_gas_limit, &base_fee, i);
-                last += 1;
-                continue 'tail_loop;
-            }
+        //         // dependencies fit, just trim it
+        //         chains.trim(gas_limit - dep_gas_limit, &base_fee, i);
+        //         last += 1;
+        //         continue 'tail_loop;
+        //     }
 
-            // the merge loop ended after processing all the chains and we probably
-            // have still gas to spare; end the loop
-            break;
-        }
+        //     // the merge loop ended after processing all the chains and we probably
+        //     // have still gas to spare; end the loop
+        //     break;
+        // }
 
-        // if we have gasLimit to spare, pick some random (non-negative) chains to fill the block
-        // we pick randomly so that we minimize the probability of duplication among all miners
-        if gas_limit >= gas_guess::MIN_GAS {
-            let mut random_count = 0;
-            // shuffle to get any random chain
-            crate::msg_chain_fixed::shuffle_chains(&mut chains.chain);
+        // // if we have gasLimit to spare, pick some random (non-negative) chains to fill the block
+        // // we pick randomly so that we minimize the probability of duplication among all miners
+        // if gas_limit >= gas_guess::MIN_GAS {
+        //     let mut random_count = 0;
+        //     // shuffle to get any random chain
+        //     crate::msg_chain_fixed::shuffle_chains(&mut chains.chain);
 
-            for i in 0..chains.chain.len() {
-                // let chain = &mut chains[i];
-                // have we filled the block
-                if gas_limit < gas_guess::MIN_GAS {
-                    break;
-                }
+        //     for i in 0..chains.chain.len() {
+        //         // let chain = &mut chains[i];
+        //         // have we filled the block
+        //         if gas_limit < gas_guess::MIN_GAS {
+        //             break;
+        //         }
 
-                // has it been merged or invalidated?
-                if chains.chain[i].merged || !chains.chain[i].valid {
-                    continue;
-                }
+        //         // has it been merged or invalidated?
+        //         if chains.chain[i].merged || !chains.chain[i].valid {
+        //             continue;
+        //         }
 
-                // is it negative
-                if chains.chain[i].gas_perf < 0.0 {
-                    continue;
-                }
+        //         // is it negative
+        //         if chains.chain[i].gas_perf < 0.0 {
+        //             continue;
+        //         }
 
-                let mut chain_gas_limit = chains.chain[i].gas_limit;
-                let mut dep_gas_limit: i64 = 0;
-                let mut chain_deps = vec![];
+        //         let mut chain_gas_limit = chains.chain[i].gas_limit;
+        //         let mut dep_gas_limit: i64 = 0;
+        //         let mut chain_deps = vec![];
 
-                while let Some(chain_node) = chains.move_backward() {
-                    if !chain_node.merged {
-                        chain_deps.push(chain_node.clone());
-                        chain_gas_limit += chain_node.gas_limit;
-                        dep_gas_limit += chain_node.gas_limit;
-                    }
-                }
+        //         while let Some(chain_node) = chains.move_backward() {
+        //             if !chain_node.merged {
+        //                 chain_deps.push(chain_node.clone());
+        //                 chain_gas_limit += chain_node.gas_limit;
+        //                 dep_gas_limit += chain_node.gas_limit;
+        //             }
+        //         }
 
-                // do the deps fit? if the deps won't fit, invalidate the chain
-                if dep_gas_limit > gas_limit {
-                    // chains.chain[i].invalidate();
-                    continue;
-                }
+        //         // do the deps fit? if the deps won't fit, invalidate the chain
+        //         if dep_gas_limit > gas_limit {
+        //             // chains.chain[i].invalidate();
+        //             continue;
+        //         }
 
-                // do they fit as is? if it doesn't, trim to make it fit if possible
-                if chain_gas_limit > gas_limit {
-                    chains.trim(gas_limit - dep_gas_limit, &base_fee, i);
+        //         // do they fit as is? if it doesn't, trim to make it fit if possible
+        //         if chain_gas_limit > gas_limit {
+        //             chains.trim(gas_limit - dep_gas_limit, &base_fee, i);
 
-                    if !chains.chain[i].valid {
-                        continue;
-                    }
-                }
+        //             if !chains.chain[i].valid {
+        //                 continue;
+        //             }
+        //         }
 
-                // include it together with all dependencies
-                for i in (0..chain_deps.len()).rev() {
-                    let mut cur_chain = &mut chain_deps[i];
-                    cur_chain.merged = true;
-                    result.append(&mut cur_chain.msgs.clone());
-                    random_count += cur_chain.msgs.len();
-                }
+        //         // include it together with all dependencies
+        //         for i in (0..chain_deps.len()).rev() {
+        //             let mut cur_chain = &mut chain_deps[i];
+        //             cur_chain.merged = true;
+        //             result.append(&mut cur_chain.msgs.clone());
+        //             random_count += cur_chain.msgs.len();
+        //         }
 
-                chains.chain[i].merged = true;
-                result.append(&mut chains.chain[i].msgs);
-                random_count += chains.chain[i].msgs.len();
-                gas_limit -= chain_gas_limit;
+        //         chains.chain[i].merged = true;
+        //         result.append(&mut chains.chain[i].msgs);
+        //         random_count += chains.chain[i].msgs.len();
+        //         gas_limit -= chain_gas_limit;
 
-                if random_count > 0 {
-                    warn!("optimal selection failed to pack a block; picked {} messages with random selection",
-                    random_count);
-                }
-            }
-        }
+        //         if random_count > 0 {
+        //             warn!("optimal selection failed to pack a block; picked {} messages with random selection",
+        //             random_count);
+        //         }
+        //     }
+        // }
 
         Ok(result)
     }
