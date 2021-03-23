@@ -1,11 +1,15 @@
 use actorv0::TokenAmount;
 use address::Address;
+use clock::ChainEpoch;
 use encoding::to_vec;
 use forest_message::UnsignedMessage;
 use ipld_blockstore::BlockStore;
-use serde::Serialize;
+use num_bigint::BigInt;
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use vm::ActorState;
+
+use crate::ActorVersion;
 
 /// Paych actor method.
 pub type Method = actorv3::paych::Method;
@@ -47,7 +51,86 @@ impl State {
             Err(format!("Unknown actor code {}", actor.code).into())
         }
     }
+
+    pub fn from(&self) -> Address {
+        match self {
+            State::V0(st) => st.from,
+            State::V2(st) => st.from,
+            State::V3(st) => st.from,
+        }
+    }
+    pub fn to(&self) -> Address {
+        match self {
+            State::V0(st) => st.to,
+            State::V2(st) => st.to,
+            State::V3(st) => st.to,
+        }
+    }
+    pub fn settling_at(&self) -> ChainEpoch {
+        match self {
+            State::V0(st) => st.settling_at,
+            State::V2(st) => st.settling_at,
+            State::V3(st) => st.settling_at,
+        }
+    }
+    pub fn to_send(&self) -> &TokenAmount {
+        match self {
+            State::V0(st) => &st.to_send,
+            State::V2(st) => &st.to_send,
+            State::V3(st) => &st.to_send,
+        }
+    }
+    fn get_or_load_ls_amt<'a, BS: BlockStore>(
+        &self,
+        bs: &'a BS,
+    ) -> Result<crate::adt::Array<'a, BS, LaneState>, Box<dyn Error>> {
+        Ok(match self {
+            State::V0(st) => crate::adt::Array::load(&st.lane_states, bs, ActorVersion::V0)?,
+            State::V2(st) => crate::adt::Array::load(&st.lane_states, bs, ActorVersion::V2)?,
+            State::V3(st) => crate::adt::Array::load(&st.lane_states, bs, ActorVersion::V3)?,
+        })
+    }
+    pub fn lane_count<'a, BS: BlockStore>(&self, bs: &'a BS) -> Result<u64, Box<dyn Error>> {
+        let lsamt = self.get_or_load_ls_amt(bs)?;
+
+        Ok(lsamt.count())
+    }
+
+    pub fn for_each_lane_state<BS: BlockStore>(
+        &self,
+        bs: &BS,
+        mut f: impl FnMut(u64, &LaneState) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(), Box<dyn Error>> {
+        let lsamt = self.get_or_load_ls_amt(bs)?;
+        lsamt.for_each(|idx, ls| f(idx, ls.clone()))
+    }
 }
+
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum LaneState {
+    V0(actorv0::paych::LaneState),
+    V2(actorv2::paych::LaneState),
+    V3(actorv2::paych::LaneState),
+}
+
+impl LaneState {
+    pub fn redeemed(&self) -> &BigInt {
+        match self {
+            LaneState::V0(ls) => &ls.redeemed,
+            LaneState::V2(ls) => &ls.redeemed,
+            LaneState::V3(ls) => &ls.redeemed,
+        }
+    }
+    pub fn nonce(&self) -> u64 {
+        match self {
+            LaneState::V0(ls) => ls.nonce,
+            LaneState::V2(ls) => ls.nonce,
+            LaneState::V3(ls) => ls.nonce,
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(untagged)]
 pub enum SignedVoucher {
