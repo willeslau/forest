@@ -7,10 +7,10 @@ pub mod init;
 pub mod market;
 pub mod miner;
 pub mod multisig;
+pub mod paych;
 pub mod power;
 pub mod reward;
 pub mod system;
-pub mod paych;
 
 use cid::Cid;
 use num_bigint::BigInt;
