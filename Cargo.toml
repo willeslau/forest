@@ -64,3 +64,6 @@ commcid = { path = "./utils/commcid" }
 forest_vm = { path = "./vm" }
 forest_runtime = { path = "./vm/runtime" }
 forest_message = { path = "./vm/message" }
+
+[profile.release]
+debug = true

@@ -31,7 +31,7 @@ use runtime::{
     Runtime, Syscalls,
 };
 use state_tree::StateTree;
-use std::cell::RefCell;
+use std::{cell::RefCell, time::SystemTime};
 use std::collections::{HashMap, HashSet};
 use std::error::Error as StdError;
 use std::marker::PhantomData;
@@ -40,6 +40,8 @@ use vm::{
     actor_error, ActorError, ActorState, ExitCode, MethodNum, Serialized, TokenAmount,
     EMPTY_ARR_CID, METHOD_SEND,
 };
+use indexmap::IndexMap;
+
 
 /// Max runtime call depth
 const MAX_CALL_DEPTH: u64 = 4096;
@@ -983,11 +985,11 @@ where
 
     fn batch_verify_seals(
         &self,
-        vis: &[(&Address, &Vec<SealVerifyInfo>)],
+        vis: &IndexMap<Address, Vec<SealVerifyInfo>>,
     ) -> Result<HashMap<Address, Vec<bool>>, Box<dyn StdError>> {
         // Gas charged for batch verify in actor
-
-        let out = vis
+        let now = SystemTime::now(); 
+        let out: HashMap<_,_> = vis
             .par_iter()
             .map(|(&addr, seals)| {
                 let results = seals
@@ -1007,6 +1009,7 @@ where
                 (addr, results)
             })
             .collect();
+        println!("Batch Verify Seals took: {:?} on {} addresses totalling {} items", now.elapsed(), out.len(), out.len() * out.iter().fold(0, |sum, val| sum  +1));
         Ok(out)
     }
 }

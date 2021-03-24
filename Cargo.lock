@@ -2265,8 +2265,6 @@ dependencies = [
 [[package]]
 name = "forest_actor"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2f00f95cb18910083be3ccac343fd4738d58bbf70a9c92d64ba4b19baeb3b95"
 dependencies = [
  "ahash 0.5.10",
  "base64 0.13.0",
@@ -2299,8 +2297,6 @@ dependencies = [
 [[package]]
 name = "forest_actor"
 version = "1.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bbded62add26ba31c27e565b663802ca77ad669df593fa1209df868ef3caa74"
 dependencies = [
  "ahash 0.6.2",
  "base64 0.13.0",
@@ -2362,6 +2358,7 @@ dependencies = [
  "log",
  "num-derive",
  "num-traits 0.2.14",
+ "rayon",
  "serde",
  "unsigned-varint 0.6.0",
 ]
@@ -2612,6 +2609,7 @@ dependencies = [
  "forest_db",
  "forest_encoding",
  "forest_vm",
+ "indexmap",
  "interpreter",
  "ipld_blockstore",
  "log",
@@ -3306,6 +3304,7 @@ checksum = "4fb1fa934250de4de8aef298d81c729a7d33d8c239daa3a7575e6b92bfc7313b"
 dependencies = [
  "autocfg",
  "hashbrown 0.9.1",
+ "rayon",
  "serde",
 ]
 
@@ -3398,6 +3397,7 @@ dependencies = [
  "forest_message",
  "forest_runtime",
  "forest_vm",
+ "indexmap",
  "interpreter",
  "ipld_blockstore",
  "ipld_hamt 1.0.0",
@@ -4624,9 +4624,9 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.20.0"
+version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa9b4819da1bc61c0ea48b63b7bc8604064dd43013e7cc325df098d49cd7c18a"
+checksum = "b2ccba0cfe4fdf15982d1674c69b1fd80bad427d293849982668dfe454bd61f2"
 dependencies = [
  "bitflags 1.2.1",
  "cc",
@@ -5217,16 +5217,16 @@ dependencies = [
 
 [[package]]
 name = "pprof"
-version = "0.4.3"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "234cb1ca0d59aa771d9bc7e268739d7aef6ca7e9e8d3b78d92f266cd663fd0c1"
+checksum = "a066eee7dbaf89a91078ceb15f56642c8d934eb2a639e7f098dd3f365651f55a"
 dependencies = [
  "backtrace",
  "inferno",
  "lazy_static",
  "libc",
  "log",
- "nix 0.20.0",
+ "nix 0.19.1",
  "parking_lot 0.11.1",
  "symbolic-demangle",
  "tempfile",

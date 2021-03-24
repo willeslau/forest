@@ -30,7 +30,7 @@ use num_bigint::BigInt;
 use num_derive::FromPrimitive;
 use num_traits::{FromPrimitive, Signed, Zero};
 use runtime::{ActorCode, Runtime};
-use std::collections::HashSet;
+use std::{collections::HashSet, time::SystemTime};
 use std::error::Error as StdError;
 use vm::{
     actor_error, ActorError, ExitCode, MethodNum, Serialized, TokenAmount, METHOD_CONSTRUCTOR,
@@ -701,6 +701,7 @@ impl Actor {
         BS: BlockStore,
         RT: Runtime<BS>,
     {
+        let now = SystemTime::now();
         rt.validate_immediate_caller_is(std::iter::once(&*CRON_ACTOR_ADDR))?;
 
         let mut amount_slashed = BigInt::zero();
@@ -1025,6 +1026,8 @@ impl Actor {
                 amount_slashed,
             )?;
         }
+        println!("Markets epoch tick took: {:?}", now.elapsed());
+
         Ok(())
     }
 }

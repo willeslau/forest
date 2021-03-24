@@ -24,7 +24,7 @@ use networks::{UPGRADE_CLAUS_HEIGHT, UPGRADE_PLACEHOLDER_HEIGHT};
 use num_bigint::{BigInt, Sign};
 use num_traits::Zero;
 use state_tree::StateTree;
-use std::collections::HashSet;
+use std::{collections::HashSet, time::SystemTime};
 use std::convert::TryFrom;
 use std::error::Error as StdError;
 use std::marker::PhantomData;
@@ -201,10 +201,11 @@ where
         mut callback: Option<impl FnMut(&Cid, &ChainMessage, &ApplyRet) -> Result<(), String>>,
     ) -> Result<Vec<MessageReceipt>, Box<dyn StdError>> {
         let mut receipts = Vec::new();
-        let mut processed = HashSet::<Cid>::default();
-
+        let mut processed = HashSet::<Cid>::with_capacity(400);
+        let now = SystemTime::now();
         for i in parent_epoch..epoch {
             if i > parent_epoch {
+                
                 self.run_cron(epoch, callback.as_mut())?;
             }
             if let Some(new_state) = self.migrate_state(i)? {
@@ -212,7 +213,8 @@ where
             }
             self.epoch = i + 1;
         }
-
+        log::error!("First Cron took: {:?}", now.elapsed());
+        let now = SystemTime::now();
         for block in messages.iter() {
             let mut penalty = Default::default();
             let mut gas_reward = Default::default();
@@ -242,6 +244,7 @@ where
             for msg in block.messages.iter() {
                 process_msg(msg)?;
             }
+            log::error!("Applying all the messages took: {:?}", now.elapsed());
 
             // Generate reward transaction for the miner of the block
             let params = Serialized::serialize(AwardBlockRewardParams {
@@ -287,8 +290,10 @@ where
                 callback(&rew_msg.cid()?, &ChainMessage::Unsigned(rew_msg), &ret)?;
             }
         }
-
+        let now = SystemTime::now();
         self.run_cron(epoch, callback.as_mut())?;
+        log::error!("Second cron took: {:?}", now.elapsed());
+
         Ok(receipts)
     }
 

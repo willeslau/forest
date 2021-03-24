@@ -27,6 +27,7 @@ ahash = "0.6"
 lazy_static = "1.4"
 rayon = "1.3"
 networks = { path = "../../types/networks" }
+indexmap = { version = "1.3.2", features = ["serde-1", "rayon"] }
 
 [dev-dependencies]
 ipld_hamt = "1.0"

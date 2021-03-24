@@ -443,6 +443,7 @@ where
             "Successfully validated tipset {:?} at epoch: {}",
             fts_key, epoch
         );
+
         // if let Ok(report) = guard.report().build() {
         //     let file = std::fs::File::create("flamegraph.svg").unwrap();
         //     report.flamegraph(file).unwrap();
@@ -541,8 +542,11 @@ where
         let base_ts_clone = Arc::clone(&base_ts);
         let sm_c = Arc::clone(&sm);
         validations.push(task::spawn_blocking(move || {
-            Self::check_block_msgs(sm_c, &b, &base_ts_clone)
-                .map_err(|e| Error::Validation(e.to_string()))
+            let now = SystemTime::now();
+            let ret = Self::check_block_msgs(sm_c, &b, &base_ts_clone)
+                .map_err(|e| Error::Validation(e.to_string()));
+                println!("Check block msgs is taking {:?}", now.elapsed());
+            ret
         }));
 
         // * Miner validations
@@ -595,6 +599,7 @@ where
         let base_ts_clone = Arc::clone(&base_ts);
         let b_cloned = Arc::clone(&block);
         validations.push(task::spawn(async move {
+            let now = SystemTime::now();
             let h = b_cloned.header();
             let (state_root, rec_root) = sm_cloned
                 .tipset_state::<V>(&base_ts_clone)
@@ -614,6 +619,7 @@ where
                     rec_root,
                 )));
             }
+            println!("State root and receipt root validations: {:?}", now.elapsed());
             Ok(())
         }));
 
@@ -624,6 +630,8 @@ where
         let sm_c = Arc::clone(&sm);
         let lbst_clone = Arc::clone(&lbst);
         validations.push(task::spawn_blocking(move || {
+            let now = SystemTime::now();
+
             let h = b_clone.header();
             // Safe to unwrap because checked to be `Some` in sanity check.
             let election_proof = h.election_proof().as_ref().unwrap();
@@ -676,7 +684,7 @@ where
                     election_proof.win_count, j
                 )));
             }
-
+            println!("winner election post validations {:?}", now.elapsed());
             Ok(())
         }));
 
@@ -746,8 +754,10 @@ where
         // * Winning PoSt proof validation
         let b_clone = block.clone();
         validations.push(task::spawn_blocking(move || {
+            let now = SystemTime::now();
             Self::verify_winning_post_proof(&sm, win_p_nv, b_clone.header(), &prev_beacon, &lbst)
                 .map_err(|e| format!("Verify winning PoSt failed: {}", e))?;
+                println!("Winning post took this long to verify: {:?}", now.elapsed());
 
             Ok(())
         }));
@@ -870,6 +880,7 @@ where
         };
 
         let mut account_sequences: HashMap<Address, u64> = HashMap::default();
+        // TODO: This should use a temp store.
         let db = state_manager.blockstore();
         let (state_root, _) = task::block_on(state_manager.tipset_state::<V>(&base_ts))
             .map_err(|e| format!("Could not update state: {}", e))?;
@@ -919,6 +930,9 @@ where
     where
         V: ProofVerifier,
     {
+                        // let guard = pprof::ProfilerGuard::new(100).unwrap();
+
+
         if cfg!(feature = "insecure_post") {
             let wpp = header.winning_post_proof();
             if wpp.is_empty() {
@@ -967,9 +981,14 @@ where
                 Error::Validation(format!("Failed to get sectors for post: {}", e.to_string()))
             })?;
 
-        V::verify_winning_post(Randomness(rand), header.winning_post_proof(), &sectors, id).map_err(
+        let ret = V::verify_winning_post(Randomness(rand), header.winning_post_proof(), &sectors, id).map_err(
             |e| Error::Validation(format!("Failed to verify winning PoSt: {}", e.to_string())),
-        )
+        );
+        //         if let Ok(report) = guard.report().build() {
+        //     let file = std::fs::File::create("flamegraph.svg").unwrap();
+        //     report.flamegraph(file).unwrap();
+        // };
+        ret
     }
 
     fn validate_miner(sm: &StateManager<DB>, maddr: &Address, ts_state: &Cid) -> Result<(), Error> {

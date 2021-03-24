@@ -5,6 +5,8 @@ mod policy;
 mod state;
 mod types;
 
+use std::time::SystemTime;
+
 pub use self::policy::*;
 pub use self::state::*;
 pub use self::types::*;
@@ -387,6 +389,7 @@ impl Actor {
         BS: BlockStore,
         RT: Runtime<BS>,
     {
+        let now = SystemTime::now();
         // Index map is needed here to preserve insertion order, miners must be iterated based
         // on order iterated through multimap.
         let mut verifies = IndexMap::new();
@@ -425,7 +428,7 @@ impl Actor {
                     return Ok(());
                 }
 
-                let mut infos = Vec::new();
+                let mut infos = Vec::with_capacity(arr.count());
                 arr.for_each(|_, svi| {
                     infos.push(svi.clone());
                     Ok(())
@@ -452,9 +455,9 @@ impl Actor {
         })?;
 
         // TODO if verifies is ever Rayon compatible, this won't be needed
-        let verif_arr: Vec<(&Address, &Vec<SealVerifyInfo>)> = verifies.iter().collect();
+        // let verif_arr: Vec<(&Address, &Vec<SealVerifyInfo>)> = verifies.into_par_iter().collect();
         let res = rt
-            .batch_verify_seals(verif_arr.as_slice())
+            .batch_verify_seals(&&verifies)
             .map_err(|e| e.downcast_default(ExitCode::ErrIllegalState, "failed to batch verify"))?;
 
         for (m, verifs) in verifies.iter() {
@@ -486,6 +489,7 @@ impl Actor {
                 );
             }
         }
+        println!("Process batch proof verifies takes: {:?}", now.elapsed());
         Ok(())
     }
 
@@ -494,6 +498,7 @@ impl Actor {
         BS: BlockStore,
         RT: Runtime<BS>,
     {
+        let now  = SystemTime::now();
         let rt_epoch = rt.curr_epoch();
         let mut cron_events = Vec::new();
         rt.transaction(|st: &mut State, rt| {
@@ -553,7 +558,6 @@ impl Actor {
             st.cron_event_queue = events.root().map_err(|e| {
                 e.downcast_default(ExitCode::ErrIllegalState, "failed to flush events")
             })?;
-
             Ok(())
         })?;
 
@@ -606,6 +610,8 @@ impl Actor {
                 Ok(())
             })?;
         }
+        println!("Processed deferred cron events took: {:?}", now.elapsed());
+
         Ok(())
     }
 }

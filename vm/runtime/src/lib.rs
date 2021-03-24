@@ -18,6 +18,7 @@ use filecoin_proofs_api::seal::compute_comm_d;
 use filecoin_proofs_api::{self as proofs};
 use forest_encoding::{blake2b_256, de, Cbor};
 use ipld_blockstore::BlockStore;
+use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error as StdError;
@@ -220,12 +221,12 @@ pub trait Syscalls {
 
     fn batch_verify_seals(
         &self,
-        vis: &[(&Address, &Vec<SealVerifyInfo>)],
+        vis: &IndexMap<Address, Vec<SealVerifyInfo>>,
     ) -> Result<HashMap<Address, Vec<bool>>, Box<dyn StdError>> {
         let mut verified = HashMap::new();
-        for (&addr, s) in vis.iter() {
+        for (addr, s) in vis.iter() {
             let vals = s.iter().map(|si| self.verify_seal(si).is_ok()).collect();
-            verified.insert(addr, vals);
+            verified.insert(*addr, vals);
         }
         Ok(verified)
     }

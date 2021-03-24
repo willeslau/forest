@@ -60,7 +60,7 @@ where
             proving_sectors
         } else {
             // let mut proving_sectors = BitField::new();
-            let mut ppp = Vec::new();
+            let mut ppp = Vec::with_capacity(3000);
             mas.for_each_deadline(store, |_, deadline| {
                 deadline.for_each(store, |_, partition: miner::Partition| {
                     // proving_sectors |= &partition.active_sectors();
@@ -69,6 +69,7 @@ where
                 })?;
                 Ok(())
             })?;
+            // proving_sectors
             ppp.into_par_iter().reduce(|| BitField::new(), |a: BitField, b: BitField| &a | &b)
             
         };
@@ -112,7 +113,6 @@ where
                 sealed_cid: s_info.sealed_cid,
             })
             .collect();
-
         Ok(out)
     }
 
