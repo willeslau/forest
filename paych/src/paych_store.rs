@@ -188,7 +188,7 @@ impl ChannelInfo {
             // Mark lower-nonce vouchers in the same lane as submitted (lower-nonce
             // vouchers are superseded by the submitted voucher)
             for mut v in self.vouchers.iter_mut() {
-                if v.voucher.lane == sv.lane && v.voucher.nonce < sv.nonce {
+                if v.voucher.lane() == sv.lane() && v.voucher.nonce() < sv.nonce() {
                     v.submitted = true;
                 }
             }

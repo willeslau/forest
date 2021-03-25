@@ -75,10 +75,10 @@ where
         drop(st);
 
         // set the voucher channel
-        voucher.channel_addr = ch;
+        voucher.set_channel_addr(ch);
 
         // Get the next sequence on the given lane
-        voucher.nonce = self.next_sequence_for_lane(ch, voucher.lane).await?;
+        voucher.set_nonce (self.next_sequence_for_lane(ch, voucher.lane()).await?);
 
         // sign the voucher
         let vb = voucher
@@ -92,7 +92,7 @@ where
             .await
             .sign(&ci.control, &vb)
             .map_err(|e| Error::Other(format!("failed to sign voucher: {}", e)))?;
-        voucher.signature = Some(sig);
+        voucher.set_signature(sig);
 
         // store the voucher
         self.add_voucher(ch, voucher.clone(), Vec::new(), BigInt::zero())
@@ -110,8 +110,8 @@ where
         let mut max_sequence = 0;
 
         for v in vouchers {
-            if v.voucher.lane == lane && max_sequence < v.voucher.nonce {
-                max_sequence = v.voucher.nonce;
+            if v.voucher.lane() == lane as usize && max_sequence < v.voucher.nonce() {
+                max_sequence = v.voucher.nonce();
             }
         }
         Ok(max_sequence + 1)
@@ -297,12 +297,12 @@ where
         // the change in value is the delta between the voucher amount and the highest
         // previous voucher amount for the lane
         let mut redeemed = BigInt::default();
-        let lane_state = lane_states.get(&sv.lane);
+        let lane_state = lane_states.get(&sv.lane());
         if let Some(redeem) = lane_state {
-            redeemed = redeem.redeemed.clone();
+            redeemed = redeem.redeemed().clone();
         }
 
-        let delta = sv.amount.clone() - redeemed;
+        let delta = sv.amount().clone() - redeemed;
 
         if min_delta > delta {
             return Err(Error::Other("supplied token amount too low".to_string()));
@@ -314,7 +314,7 @@ where
             submitted: false,
         });
 
-        if ci.next_lane <= sv.lane {
+        if ci.next_lane as usize <= sv.lane() {
             ci.next_lane += 1;
         }
 
@@ -366,7 +366,7 @@ where
             .build()
             .map_err(Error::Other)?;
 
-        sm.call::<FullVerifier>(&mut umsg, None)
+        sm.call::<FullVerifier>(&mut umsg, None).await
             .map_err(|e| Error::Other(e.to_string()))?;
 
         let smgs = self
@@ -417,21 +417,21 @@ where
                 return Err(Error::Other("voucher has already been merged".to_string()));
             }
 
-            let ok = lane_states.contains_key(&v.voucher.lane);
+            let ok = lane_states.contains_key(&v.voucher.lane() as u64);
             if !ok {
                 lane_states.insert(
-                    v.voucher.lane,
+                    v.voucher.lane() as u64,
                     LaneState {
                         redeemed: BigInt::zero(),
                         nonce: 0,
                     },
                 );
             }
-            if let Some(mut ls) = lane_states.get_mut(&v.voucher.lane) {
-                if v.voucher.nonce < ls.nonce {
+            if let Some(mut ls) = lane_states.get_mut(&v.voucher.lane()) {
+                if v.voucher.nonce() < ls.nonce() {
                     continue;
                 }
-                ls.nonce = v.voucher.nonce;
+                ls.nonce = v.voucher.nonce();
                 ls.redeemed = v.voucher.amount;
             } else {
                 return Err(Error::Other(format!(
@@ -454,21 +454,21 @@ where
 
         let mut total = BigInt::default();
         for ls in lane_states.values() {
-            let val = total.add(ls.redeemed.clone());
+            let val = total.add(ls.redeemed().clone());
             total = val
         }
 
-        let lane_ret = lane_states.get(&sv.lane);
+        let lane_ret = lane_states.get(&(sv.lane() as u64));
         if let Some(lane) = lane_ret {
             // If the voucher is for an existing lane, and the voucher nonce is higher than the lane nonce
-            if sv.nonce > lane.nonce {
+            if sv.nonce() > lane.nonce() {
                 // add the delta between the redeemed amount and the voucher
                 // amount to the total
-                total += sv.amount.sub(&lane.redeemed);
+                total += sv.amount().sub(lane.redeemed());
             }
         } else {
             // If the voucher is not for an existing lane, add its value
-            total += sv.amount
+            total += sv.amount()
         }
 
         Ok(total)

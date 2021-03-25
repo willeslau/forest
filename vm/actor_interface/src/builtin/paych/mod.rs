@@ -8,7 +8,7 @@ use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use vm::ActorState;
-
+use crypto::Signature;
 use crate::ActorVersion;
 
 /// Paych actor method.
@@ -131,12 +131,78 @@ impl LaneState {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum SignedVoucher {
     V0(actorv0::paych::SignedVoucher),
     V2(actorv2::paych::SignedVoucher),
     V3(actorv3::paych::SignedVoucher),
+}
+
+impl SignedVoucher {
+    pub fn lane(&self) -> usize {
+        match self {
+            SignedVoucher::V0(sv) => sv.lane as usize,
+            SignedVoucher::V2(sv) => sv.lane as usize,
+            SignedVoucher::V3(sv) => sv.lane,
+        }
+    }
+    pub fn nonce(&self) -> u64 {
+        match self {
+            SignedVoucher::V0(sv) => sv.nonce,
+            SignedVoucher::V2(sv) => sv.nonce,
+            SignedVoucher::V3(sv) => sv.nonce,
+        }
+    }
+    pub fn amount(&self) -> &BigInt {
+        match self {
+            SignedVoucher::V0(sv) => &sv.amount,
+            SignedVoucher::V2(sv) => &sv.amount,
+            SignedVoucher::V3(sv) => &sv.amount,
+        }
+    }
+    pub fn signature(&self) -> Option<Signature> {
+        match self {
+            SignedVoucher::V0(sv) => sv.signature.clone(),
+            SignedVoucher::V2(sv) => sv.signature.clone(),
+            SignedVoucher::V3(sv) => sv.signature.clone(),
+        }
+    }
+    pub fn set_signature(&mut self, sig: Signature) {
+        match self {
+            SignedVoucher::V0(sv) => sv.signature = Some(sig),
+            SignedVoucher::V2(sv) => sv.signature = Some(sig),
+            SignedVoucher::V3(sv) => sv.signature = Some(sig),
+        }
+    }
+    pub fn set_nonce(&mut self, nonce: u64) {
+        match self {
+            SignedVoucher::V0(sv) => sv.nonce = nonce,
+            SignedVoucher::V2(sv) => sv.nonce = nonce,
+            SignedVoucher::V3(sv) => sv.nonce = nonce,
+        }
+    }
+    pub fn signing_bytes(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+        Ok(match self {
+            SignedVoucher::V0(sv) => sv.signing_bytes()?,
+            SignedVoucher::V2(sv) => sv.signing_bytes()?,
+            SignedVoucher::V3(sv) => sv.signing_bytes()?,
+        })
+    }
+    pub fn channel_addr(&self) -> Address {
+        match self {
+            SignedVoucher::V0(sv) => sv.channel_addr,
+            SignedVoucher::V2(sv) => sv.channel_addr,
+            SignedVoucher::V3(sv) => sv.channel_addr,
+        }
+    }
+    pub fn set_channel_addr(&mut self, addr: Address) {
+        match self {
+            SignedVoucher::V0(sv) => sv.channel_addr = addr,
+            SignedVoucher::V2(sv) => sv.channel_addr= addr,
+            SignedVoucher::V3(sv) => sv.channel_addr= addr,
+        }
+    }
 }
 
 #[derive(Serialize)]

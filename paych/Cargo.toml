@@ -9,6 +9,7 @@ async-std = "1.9.0"
 actor = { package = "actor_interface", path = "../vm/actor_interface" }
 
 address = { package = "forest_address", path = "../vm/address" }
+blocks = { package = "forest_blocks", path = "../blockchain/blocks" }
 encoding = { package = "forest_encoding", version = "0.2.1" }
 thiserror = "1.0.20"
 serde = { version = "1.0", features = ["derive"] }
@@ -28,4 +29,7 @@ message_pool = { path = "../blockchain/message_pool/" }
 wallet = { package = "key_management", path = "../key_management/", features = ["json"] }
 num-traits = "0.2"
 async-trait = "0.1"
-fil_types = { path = "../types/" }
+fil_types = "0.1"
+
+vm = { package = "forest_vm", path = "../vm" }
+crypto = { package = "forest_crypto", version = "0.4" }

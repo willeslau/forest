@@ -10,6 +10,7 @@ mod manager;
 mod msg_listener;
 mod paych_store;
 mod paychannel;
+mod provider;
 mod state;
 
 pub use errors::*;
