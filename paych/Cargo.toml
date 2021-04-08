@@ -22,7 +22,7 @@ log = "0.4.8"
 derive_builder = "0.9"
 flo_stream = "0.4.0"
 chain = { path = "../blockchain/chain"}
-message = { package = "forest_message", version = "0.6" }
+message = { package = "forest_message", version = "0.7" }
 futures = "0.3.5"
 ipld_amt = "0.2"
 message_pool = { path = "../blockchain/message_pool/" }
