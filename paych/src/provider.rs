@@ -14,9 +14,9 @@ use fil_types::{verifier::ProofVerifier, NetworkVersion};
 use message::{MessageReceipt, SignedMessage, UnsignedMessage};
 use message_pool::{MessagePool, MpoolRpcProvider};
 use state_manager::{StateCallResult, StateManager};
-use std::error::Error;
+use std::{convert::TryFrom, error::Error};
 use vm::ActorState;
-use wallet::{KeyStore, Wallet};
+use wallet::{Key, KeyStore, Wallet};
 
 #[async_trait]
 trait PaychProvider {
@@ -45,7 +45,11 @@ trait PaychProvider {
         // max_fee: Option<MessageSendSpec>,
     ) -> Result<SignedMessage, Box<dyn Error>>;
     async fn wallet_has(&self, addr: Address) -> Result<bool, Box<dyn Error>>;
-    fn wallet_sign(&self, k: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>>;
+    async fn wallet_sign<V: ProofVerifier + Send + Sync + 'static>(
+        &self,
+        k: Address,
+        msg: &[u8],
+    ) -> Result<Signature, Box<dyn Error>>;
     fn state_network_version(&self, ts_key: TipsetKeys) -> Result<NetworkVersion, Box<dyn Error>>;
 
     fn resolve_to_key_address(&self, addr: Address, ts: Tipset) -> Result<Address, Box<dyn Error>>;
@@ -146,13 +150,35 @@ where
 
     async fn wallet_has(&self, addr: Address) -> Result<bool, Box<dyn Error>> {
         let keystore = self.keystore.read().await;
-
         let key = wallet::find_key(&addr, &*keystore).is_ok();
         Ok(key)
     }
 
-    fn wallet_sign(&self, k: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>> {
-        todo!()
+    async fn wallet_sign<V>(&self, addr: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>>
+    where
+        V: ProofVerifier + Send + Sync + 'static,
+    {
+        let heaviest_tipset = self
+            .sm
+            .chain_store()
+            .heaviest_tipset()
+            .await
+            .ok_or_else(|| "Could not get heaviest tipset".to_string())?;
+        let key_addr = self
+            .sm
+            .resolve_to_key_addr::<V>(&addr, &heaviest_tipset)
+            .await?;
+        let keystore = &mut *self.keystore.write().await;
+        let key = match wallet::find_key(&key_addr, keystore) {
+            Ok(key) => key,
+            Err(_) => {
+                let key_info = wallet::try_find(&key_addr, keystore)?;
+                Key::try_from(key_info)?
+            }
+        };
+
+        let sig = wallet::sign(*key.key_info.key_type(), key.key_info.private_key(), msg)?;
+        Ok(sig)
     }
 
     fn state_network_version(&self, ts_key: TipsetKeys) -> Result<NetworkVersion, Box<dyn Error>> {
