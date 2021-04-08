@@ -1,4 +1,4 @@
-use actorv0::TokenAmount;
+use actorv0::{Serialized, TokenAmount};
 use address::Address;
 use clock::ChainEpoch;
 use encoding::to_vec;
@@ -102,11 +102,11 @@ impl State {
         mut f: impl FnMut(u64, &LaneState) -> Result<(), Box<dyn Error>>,
     ) -> Result<(), Box<dyn Error>> {
         let lsamt = self.get_or_load_ls_amt(bs)?;
-        lsamt.for_each(|idx, ls| f(idx, ls.clone()))
+        lsamt.for_each(|idx, ls| f(idx, ls))
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum LaneState {
     V0(actorv0::paych::LaneState),
@@ -129,17 +129,70 @@ impl LaneState {
             LaneState::V3(ls) => ls.nonce,
         }
     }
+    pub fn set_nonce(&mut self, nonce: u64) {
+        match self {
+            LaneState::V0(ls) => ls.nonce = nonce,
+            LaneState::V2(ls) => ls.nonce = nonce,
+            LaneState::V3(ls) => ls.nonce = nonce,
+        }
+    }
+    pub fn set_redeemed(&mut self, redeemed: BigInt) {
+        match self {
+            LaneState::V0(ls) => ls.redeemed = redeemed,
+            LaneState::V2(ls) => ls.redeemed = redeemed,
+            LaneState::V3(ls) => ls.redeemed = redeemed,
+        }
+    }
+}
+#[derive(Deserialize, Serialize, Clone)]
+pub struct Merge {
+    pub lane: u64,
+    pub nonce: u64,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModVerifyParams {
+    pub actor: Address,
+    pub method: u64,
+    pub data: Serialized,
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
 pub enum SignedVoucher {
     V0(actorv0::paych::SignedVoucher),
     V2(actorv2::paych::SignedVoucher),
     V3(actorv3::paych::SignedVoucher),
 }
-
 impl SignedVoucher {
+    pub fn merges(&self) -> Vec<Merge> {
+        let merges = match self {
+            SignedVoucher::V0(sv) => {
+                sv.merges.iter().map(|m| {
+                    Merge {
+                        lane: m.lane,
+                        nonce:m.nonce
+                    }
+                }).collect()
+            }
+            SignedVoucher::V2(sv) => {         
+                sv.merges.iter().map(|m| {
+                    Merge {
+                        lane: m.lane,
+                        nonce:m.nonce
+                    }
+                }).collect()
+            }
+            SignedVoucher::V3(sv) => {                
+                sv.merges.iter().map(|m| {
+                Merge {
+                    lane: m.lane as u64,
+                    nonce:m.nonce
+                }
+            }).collect()}
+        };
+        merges
+        
+    }
     pub fn lane(&self) -> usize {
         match self {
             SignedVoucher::V0(sv) => sv.lane as usize,
@@ -201,6 +254,28 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.channel_addr = addr,
             SignedVoucher::V2(sv) => sv.channel_addr= addr,
             SignedVoucher::V3(sv) => sv.channel_addr= addr,
+        }
+    }
+    pub fn extra(&self) -> Option<ModVerifyParams>{
+        match self {
+            SignedVoucher::V0(sv) => {sv.extra.as_ref().map(|mvp| ModVerifyParams {
+                actor: mvp.actor,
+                method: mvp.method as u64,
+                data: mvp.data.clone(),
+                
+            })}
+            SignedVoucher::V2(sv) => {sv.extra.as_ref().map(|mvp| ModVerifyParams {
+                actor: mvp.actor,
+                method: mvp.method as u64,
+                data: mvp.data.clone(),
+                
+            })}
+            SignedVoucher::V3(sv) => {sv.extra.as_ref().map(|mvp| ModVerifyParams {
+                actor: mvp.actor,
+                method: mvp.method as u64,
+                data: mvp.data.clone(),
+                
+            })}
         }
     }
 }

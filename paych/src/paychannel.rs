@@ -78,7 +78,7 @@ where
         voucher.set_channel_addr(ch);
 
         // Get the next sequence on the given lane
-        voucher.set_nonce (self.next_sequence_for_lane(ch, voucher.lane()).await?);
+        voucher.set_nonce(self.next_sequence_for_lane(ch, voucher.lane() as u64).await?);
 
         // sign the voucher
         let vb = voucher
@@ -123,7 +123,7 @@ where
         sv: SignedVoucher,
     ) -> Result<HashMap<u64, LaneState>, Error> {
         let sm = self.state.sa.sm.read().await;
-        if sv.channel_addr != ch {
+        if sv.channel_addr() != ch {
             return Err(Error::Other(
                 "voucher channel address doesn't match channel address".to_string(),
             ));
@@ -135,15 +135,15 @@ where
             .ok_or_else(|| Error::HeaviestTipset)?;
         let cid = heaviest_ts.parent_state();
         let act_state: AccountState = sm
-            .load_actor_state(&pch_state.from, cid)
+            .load_actor_state(&pch_state.from(), cid)
             .map_err(|err| Error::Other(err.to_string()))?;
-        let from = act_state.address;
+        let from = act_state.pubkey_address();
 
         let vb = sv
             .signing_bytes()
             .map_err(|err| Error::Other(err.to_string()))?;
 
-        let sig = sv.signature.clone();
+        let sig = sv.signature().clone();
         sig.ok_or_else(|| Error::Other("no signature".to_owned()))?
             .verify(&vb, &from)
             .map_err(Error::Other)?;
@@ -151,12 +151,12 @@ where
         // Check the voucher against the highest known voucher nonce / value
         let lane_states = self.lane_state(&pch_state, ch).await?;
         let ls = lane_states
-            .get(&sv.lane)
+            .get(&(sv.lane() as u64))
             .ok_or_else(|| Error::Other("no lane state for given nonce".to_owned()))?;
-        if ls.nonce >= sv.nonce {
+        if ls.nonce() >= sv.nonce() {
             return Err(Error::Other("nonce too low".to_owned()));
         }
-        if ls.redeemed >= sv.amount {
+        if ls.redeemed() >= sv.amount() {
             return Err(Error::Other("voucher amount is lower than amount for voucher amount for voucher with lower nonce".to_owned()));
         }
 
@@ -175,12 +175,12 @@ where
         // lane 2:  2
         //          -
         // total:   7
-        let merge_len = sv.merges.len();
+        let merge_len = sv.merges().len();
         let total_redeemed = self.total_redeemed_with_voucher(&lane_states, sv).await?;
 
         // Total required balance = total redeemed + to send
         // must not exceed actor balance
-        let new_total = total_redeemed + pch_state.to_send;
+        let new_total = total_redeemed + pch_state.to_send();
         if act.balance < new_total {
             return Err(Error::Other(
                 "Not enough funds in channel to cover voucher".to_owned(),
@@ -213,7 +213,7 @@ where
             return Ok(false);
         }
 
-        if (sv.extra != None) & (!proof.is_empty()) {
+        if (sv.extra() != None) & (!proof.is_empty()) {
             let known = st.vouchers_for_paych(&ch).await?;
 
             for vi in known {
@@ -266,7 +266,7 @@ where
         let state: PaychState = sm
             .load_actor_state(ch, cid)
             .map_err(|err| Error::Other(err.to_string()))?;
-        Ok(state.to)
+        Ok(state.to())
     }
     /// Adds voucher to store and returns the delta; the difference between the voucher amount and the highest
     /// previous voucher amount for the lane
@@ -297,7 +297,7 @@ where
         // the change in value is the delta between the voucher amount and the highest
         // previous voucher amount for the lane
         let mut redeemed = BigInt::default();
-        let lane_state = lane_states.get(&sv.lane());
+        let lane_state = lane_states.get(&(sv.lane() as u64));
         if let Some(redeem) = lane_state {
             redeemed = redeem.redeemed().clone();
         }
@@ -366,7 +366,8 @@ where
             .build()
             .map_err(Error::Other)?;
 
-        sm.call::<FullVerifier>(&mut umsg, None).await
+        sm.call::<FullVerifier>(&mut umsg, None)
+            .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
         let smgs = self
@@ -413,11 +414,11 @@ where
         drop(st);
 
         for v in vouchers {
-            if !v.voucher.merges.is_empty() {
+            if !v.voucher.merges().is_empty() {
                 return Err(Error::Other("voucher has already been merged".to_string()));
             }
 
-            let ok = lane_states.contains_key(&v.voucher.lane() as u64);
+            let ok = lane_states.contains_key(&(v.voucher.lane() as u64));
             if !ok {
                 lane_states.insert(
                     v.voucher.lane() as u64,
@@ -427,16 +428,16 @@ where
                     },
                 );
             }
-            if let Some(mut ls) = lane_states.get_mut(&v.voucher.lane()) {
+            if let Some(mut ls) = lane_states.get_mut(&(v.voucher.lane() as u64)) {
                 if v.voucher.nonce() < ls.nonce() {
                     continue;
                 }
-                ls.nonce = v.voucher.nonce();
-                ls.redeemed = v.voucher.amount;
+                ls.set_nonce (v.voucher.nonce());
+                ls.set_redeemed(v.voucher.amount().clone());
             } else {
                 return Err(Error::Other(format!(
                     "failed to retrieve lane state for {}",
-                    v.voucher.lane
+                    v.voucher.lane()
                 )));
             }
         }
@@ -448,7 +449,7 @@ where
         lane_states: &HashMap<u64, LaneState>,
         sv: SignedVoucher,
     ) -> Result<BigInt, Error> {
-        if !sv.merges.is_empty() {
+        if !sv.merges().is_empty() {
             return Err(Error::Other("merges not supported yet".to_string()));
         }
 
@@ -629,7 +630,7 @@ where
             let lane_states = self.lane_state(&pch_state, ch).await?;
 
             for (_, v) in lane_states.iter() {
-                total_redeemed += &v.redeemed;
+                total_redeemed += &v.redeemed();
             }
         }
 

@@ -98,9 +98,11 @@ where
         //     .map_err(|e| Error::Encoding(format!("failed to iterate over values in AMT: {}", e)))?;
 
         // Ok(max_id + 1)
-        let lane_count = st.lane_count(self.sm.read().await.blockstore()).map_err(|e| Error::Other(e.to_string()))?;
+        let lane_count = st
+            .lane_count(self.sm.read().await.blockstore())
+            .map_err(|e| Error::Other(e.to_string()))?;
         if lane_count == 0 {
-            return Ok(0)
+            return Ok(0);
         }
         let mut max_id = 0;
         st.for_each_lane_state(self.sm.read().await.blockstore(), |idx: u64, _| {
@@ -108,8 +110,8 @@ where
                 max_id = idx;
             }
             Ok(())
-        }).map_err(|e| Error::Encoding(format!("failed to iterate over values in AMT: {}", e)))?;
+        })
+        .map_err(|e| Error::Encoding(format!("failed to iterate over values in AMT: {}", e)))?;
         Ok(max_id + 1)
-
     }
 }
