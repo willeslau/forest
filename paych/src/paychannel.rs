@@ -78,7 +78,10 @@ where
         voucher.set_channel_addr(ch);
 
         // Get the next sequence on the given lane
-        voucher.set_nonce(self.next_sequence_for_lane(ch, voucher.lane() as u64).await?);
+        voucher.set_nonce(
+            self.next_sequence_for_lane(ch, voucher.lane() as u64)
+                .await?,
+        );
 
         // sign the voucher
         let vb = voucher
@@ -432,7 +435,7 @@ where
                 if v.voucher.nonce() < ls.nonce() {
                     continue;
                 }
-                ls.set_nonce (v.voucher.nonce());
+                ls.set_nonce(v.voucher.nonce());
                 ls.set_redeemed(v.voucher.amount().clone());
             } else {
                 return Err(Error::Other(format!(
