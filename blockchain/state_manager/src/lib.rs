@@ -62,7 +62,7 @@ pub struct InvocResult {
 }
 
 /// An alias Result that represents an InvocResult and an Error.
-type StateCallResult = Result<InvocResult, Error>;
+pub type StateCallResult = Result<InvocResult, Error>;
 
 /// External format for returning market balance from state.
 #[derive(Default, Serialize, Deserialize)]

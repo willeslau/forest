@@ -8,10 +8,10 @@ use blockstore::BlockStore;
 use chain::ChainStore;
 use cid::Cid;
 use crypto::Signature;
-use fil_types::verifier::ProofVerifier;
-use message::UnsignedMessage;
+use fil_types::{NetworkVersion, verifier::ProofVerifier};
+use message::{MessageReceipt, SignedMessage, UnsignedMessage};
 use message_pool::{MessagePool, MpoolRpcProvider};
-use state_manager::StateManager;
+use state_manager::{StateCallResult, StateManager};
 use std::error::Error;
 use vm::ActorState;
 use wallet::Wallet;
@@ -32,19 +32,17 @@ trait PaychProvider {
         addr: Address,
         ts_key: TipsetKeys,
     ) -> Result<Address, Box<dyn Error>>;
-    fn state_wait_msg(&self, msg: Cid, confidence: u64) -> Result<MessageLookup, Box<dyn Error>>;
+    fn state_wait_msg(&self, msg: Cid, confidence: u64) -> Result<(Option<Arc<Tipset>>, Option<MessageReceipt>), Box<dyn Error>>;
     fn mpool_push_message(
         &self,
         msg: UnsignedMessage,
-        max_fee: Option<MessageSendSpec>,
+        // max_fee: Option<MessageSendSpec>,
     ) -> Result<SignedMessage, Box<dyn Error>>;
     fn wallet_has(&self, addr: Address) -> Result<bool, Box<dyn Error>>;
     fn wallet_sign(&self, k: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>>;
     fn state_network_version(&self, ts_key: TipsetKeys) -> Result<NetworkVersion, Box<dyn Error>>;
 
-    // ResolveToKeyAddress(ctx context.Context, addr address.Address, ts *types.TipSet) (address.Address, error)
-    // GetPaychState(ctx context.Context, addr address.Address, ts *types.TipSet) (*types.Actor, paych.State, error)
-    // Call(ctx context.Context, msg *types.Message, ts *types.TipSet) (*api.InvocResult, error)
+    
     fn resolve_to_key_address(&self, addr: Address, ts: Tipset) -> Result<Address, Box<dyn Error>>;
     fn get_paych_state(
         &self,
@@ -57,7 +55,6 @@ trait PaychProvider {
         tipset: Option<Arc<Tipset>>,
     ) -> StateCallResult;
 }
-
 pub struct DefaultPaychProvider<DB, KS> {
     pub sm: Arc<StateManager<DB>>,
     pub cs: Arc<ChainStore<DB>>,

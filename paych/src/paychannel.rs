@@ -630,7 +630,7 @@ where
             let lane_states = self.lane_state(&pch_state, ch).await?;
 
             for (_, v) in lane_states.iter() {
-                total_redeemed += &v.redeemed();
+                total_redeemed += v.redeemed();
             }
         }
 
@@ -642,7 +642,7 @@ where
             pending_amt: ch_info.pending_amount,
             pending_wait_sentinel: wait_sentinel,
             queued_amt,
-            voucher_redeemed_amt: total_redeemed,
+            voucher_redeemed_amt: total_redeemed.clone(),
         })
     }
     /// Checks the state of the channel and takes appropriate action
