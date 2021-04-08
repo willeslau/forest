@@ -14,7 +14,7 @@ use message_pool::{MessagePool, MpoolRpcProvider};
 use state_manager::{StateCallResult, StateManager};
 use std::error::Error;
 use vm::ActorState;
-use wallet::Wallet;
+use wallet::{KeyStore, Wallet};
 
 use crate::StateAccessor;
 trait PaychProvider {
@@ -42,7 +42,7 @@ trait PaychProvider {
     fn wallet_sign(&self, k: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>>;
     fn state_network_version(&self, ts_key: TipsetKeys) -> Result<NetworkVersion, Box<dyn Error>>;
 
-    
+
     fn resolve_to_key_address(&self, addr: Address, ts: Tipset) -> Result<Address, Box<dyn Error>>;
     fn get_paych_state(
         &self,
@@ -62,4 +62,62 @@ pub struct DefaultPaychProvider<DB, KS> {
     pub mpool: Arc<MessagePool<MpoolRpcProvider<DB>>>,
     pub sa: StateAccessor<DB>,
     pub wallet: Arc<RwLock<Wallet<KS>>>,
+}
+
+impl<DB, KS> PaychProvider for DefaultPaychProvider<DB, KS>
+where
+    DB: BlockStore + Sync + Send + 'static,
+    KS: KeyStore + Sync + Send + 'static,
+{
+    fn state_account_key(
+        &self,
+        addr: Address,
+        ts_key: TipsetKeys,
+    ) -> Result<Address, Box<dyn Error>> {
+        todo!()
+    }
+
+    fn state_wait_msg(&self, msg: Cid, confidence: u64) -> Result<(Option<Arc<Tipset>>, Option<MessageReceipt>), Box<dyn Error>> {
+        todo!()
+    }
+
+    fn mpool_push_message(
+        &self,
+        msg: UnsignedMessage,
+        // max_fee: Option<MessageSendSpec>,
+    ) -> Result<SignedMessage, Box<dyn Error>> {
+        todo!()
+    }
+
+    fn wallet_has(&self, addr: Address) -> Result<bool, Box<dyn Error>> {
+        todo!()
+    }
+
+    fn wallet_sign(&self, k: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>> {
+        todo!()
+    }
+
+    fn state_network_version(&self, ts_key: TipsetKeys) -> Result<NetworkVersion, Box<dyn Error>> {
+        todo!()
+    }
+
+    fn resolve_to_key_address(&self, addr: Address, ts: Tipset) -> Result<Address, Box<dyn Error>> {
+        todo!()
+    }
+
+    fn get_paych_state(
+        &self,
+        addr: Address,
+        ts: Tipset,
+    ) -> Result<(ActorState, actor::paych::State), Box<dyn Error>> {
+        todo!()
+    }
+
+    fn call<V: ProofVerifier>(
+        &self,
+        message: &mut UnsignedMessage,
+        tipset: Option<Arc<Tipset>>,
+    ) -> StateCallResult {
+        todo!()
+    }
 }
