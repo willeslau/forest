@@ -32,4 +32,4 @@ async-trait = "0.1"
 fil_types = "0.1"
 
 vm = { package = "forest_vm", path = "../vm" }
-crypto = { package = "forest_crypto", version = "0.4" }
+crypto = { package = "forest_crypto", version = "0.5" }

@@ -20,3 +20,4 @@ pub use msg_listener::*;
 pub use paych_store::*;
 pub use paychannel::*;
 pub use state::*;
+pub use provider::*;

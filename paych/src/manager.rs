@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use super::{ChannelInfo, Error, PaychStore, StateAccessor};
-use crate::{ChannelAccessor, PaychFundsRes, VoucherInfo, DIR_INBOUND};
+use crate::{ChannelAccessor, PaychFundsRes, VoucherInfo, DIR_INBOUND, PaychProvider};
 use actor::paych::{Method, SignedVoucher};
 use address::Address;
 use async_std::sync::{Arc, RwLock};
@@ -20,27 +20,28 @@ use std::collections::HashMap;
 use wallet::{KeyStore, Wallet};
 
 /// Thread safe payment channel management
-pub struct Manager<DB, KS>
+pub struct Manager<P>
 where
-    DB: BlockStore + Send + Sync + 'static,
-    KS: KeyStore + Send + Sync + 'static,
+    P: PaychProvider + Send + Sync + 'static,
 {
     pub store: Arc<RwLock<PaychStore>>,
     #[allow(clippy::type_complexity)]
-    pub channels: Arc<RwLock<HashMap<String, Arc<ChannelAccessor<DB, KS>>>>>,
-    pub state: Arc<ResourceAccessor<DB, KS>>,
+    pub channels: Arc<RwLock<HashMap<String, Arc<ChannelAccessor<P>>>>>,
+    // pub state: Arc<ResourceAccessor<DB, KS>>,
+    pub api: Arc<P>,
 }
-/// Thread safe access to message pool, state manager and keystore resource for paychannel usage
-pub struct ResourceAccessor<DB, KS>
-where
-    DB: BlockStore + Send + Sync + 'static,
-    KS: KeyStore + Send + Sync + 'static,
-{
-    pub keystore: Arc<RwLock<KS>>,
-    pub mpool: Arc<MessagePool<MpoolRpcProvider<DB>>>,
-    pub sa: StateAccessor<DB>,
-    pub wallet: Arc<RwLock<Wallet<KS>>>,
-}
+// /// Thread safe access to message pool, state manager and keystore resource for paychannel usage
+// pub struct ResourceAccessor<DB, KS, P>
+// where
+//     DB: BlockStore + Send + Sync + 'static,
+//     KS: KeyStore + Send + Sync + 'static,
+//     P: PaychProvider + Send + Sync + 'static,
+// {
+//     pub keystore: Arc<RwLock<KS>>,
+//     pub mpool: Arc<MessagePool<MpoolRpcProvider<DB>>>,
+//     pub sa: StateAccessor<DB, P>,
+//     pub wallet: Arc<RwLock<Wallet<KS>>>,
+// }
 /// Funds made available in channel
 pub struct ChannelAvailableFunds {
     // The address of the channel
@@ -64,16 +65,22 @@ pub struct ChannelAvailableFunds {
     pub voucher_redeemed_amt: BigInt,
 }
 
-impl<DB, KS> Manager<DB, KS>
+impl<P> Manager<P>
 where
-    DB: BlockStore + Send + Sync,
-    KS: KeyStore + Send + Sync + 'static,
+    // DB: BlockStore + Send + Sync,
+    // KS: KeyStore + Send + Sync + 'static,
+    P: PaychProvider + Send + Sync + 'static,
 {
-    pub fn new(store: PaychStore, state: ResourceAccessor<DB, KS>) -> Self {
+    // pub fn new(store: PaychStore, state: ResourceAccessor<DB, KS, P>, provider: P) -> Self {
+    pub fn new(store: PaychStore,  provider: P) -> Self 
+    where P: PaychProvider
+    {
+        let api = Arc::new(provider);
         Manager {
             store: Arc::new(RwLock::new(store)),
-            state: Arc::new(state),
+            // state: Arc::new(state),
             channels: Arc::new(RwLock::new(HashMap::new())),
+            api: api
         }
     }
     /// Start restarts tracking of any messages that were sent to chain.
@@ -235,7 +242,7 @@ where
     pub async fn inbound_channel_accessor(
         &mut self,
         ch: Address,
-    ) -> Result<Arc<ChannelAccessor<DB, KS>>, Error> {
+    ) -> Result<Arc<ChannelAccessor<P>>, Error> {
         // Make sure channel is in store, or can be fetched from state, and that
         // the channel To address is owned by the wallet
         let ci = self.track_inbound_channel(ch).await?;
@@ -313,9 +320,8 @@ where
             .map_err(Error::Other)?;
 
         let smgs = self
-            .state
-            .mpool
-            .mpool_unsigned_msg_push(umsg, self.state.keystore.clone())
+        .api
+        .mpool_push_message::<FullVerifier>(umsg)
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -338,9 +344,8 @@ where
             .map_err(Error::Other)?;
 
         let smgs = self
-            .state
-            .mpool
-            .mpool_unsigned_msg_push(umsg, self.state.keystore.clone())
+            .api
+            .mpool_push_message::<FullVerifier>(umsg)
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -350,7 +355,7 @@ where
         &self,
         from: Address,
         to: Address,
-    ) -> Result<Arc<ChannelAccessor<DB, KS>>, Error> {
+    ) -> Result<Arc<ChannelAccessor<P>>, Error> {
         let channels = self.channels.read().await;
         let key = accessor_cache_key(&from, &to);
 
@@ -383,7 +388,7 @@ where
         &self,
         from: Address,
         to: Address,
-    ) -> Result<Arc<ChannelAccessor<DB, KS>>, Error> {
+    ) -> Result<Arc<ChannelAccessor<P>>, Error> {
         let key = accessor_cache_key(&from, &to);
         let ca = ChannelAccessor::new(&self);
         let mut channels = self.channels.write().await;
@@ -394,7 +399,7 @@ where
     async fn accessor_by_address(
         &self,
         ch: Address,
-    ) -> Result<Arc<ChannelAccessor<DB, KS>>, Error> {
+    ) -> Result<Arc<ChannelAccessor<P>>, Error> {
         let store = self.store.read().await;
         let ci = store.by_address(ch).await?;
         self.accessor_by_from_to(ci.control, ci.target).await

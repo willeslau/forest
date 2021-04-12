@@ -2,12 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use super::Error;
-use crate::{
-    ChannelAvailableFunds, ChannelInfo, FundsReq, Manager, MergeFundsReq, MsgListeners,
-    PaychFundsRes, PaychStore, VoucherInfo,
-};
+use crate::{ChannelAvailableFunds, ChannelInfo, FundsReq, Manager, MergeFundsReq, MsgListeners, PaychFundsRes, PaychProvider, PaychStore, VoucherInfo};
 extern crate log;
-use super::ResourceAccessor;
 use actor::account::State as AccountState;
 use actor::init::{ExecParams, ExecReturn};
 use actor::paych::{
@@ -30,34 +26,32 @@ use message::UnsignedMessage;
 use num_bigint::BigInt;
 use num_traits::Zero;
 use state_manager::StateManager;
-use std::collections::HashMap;
+use std::{collections::HashMap, marker::PhantomData};
 use std::ops::{Add, Sub};
 use wallet::KeyStore;
 
 const MESSAGE_CONFIDENCE: i64 = 5;
 
-pub struct ChannelAccessor<DB, KS>
-where
-    DB: BlockStore + Send + Sync + 'static,
-    KS: KeyStore + Send + Sync + 'static,
+pub struct ChannelAccessor<P>
 {
     store: Arc<RwLock<PaychStore>>,
     msg_listeners: RwLock<MsgListeners>,
     funds_req_queue: RwLock<Vec<FundsReq>>,
-    state: Arc<ResourceAccessor<DB, KS>>,
+    api: Arc<P>,
 }
 
-impl<DB, KS> ChannelAccessor<DB, KS>
+impl<P> ChannelAccessor<P>
 where
-    DB: BlockStore + Send + Sync + 'static,
-    KS: KeyStore + Send + Sync + 'static,
+    P: PaychProvider + Sync + Send + 'static,
 {
-    pub fn new(pm: &Manager<DB, KS>) -> Self {
+    pub fn new(pm: &Manager<P>) -> Self 
+    where P: PaychProvider
+    {
         ChannelAccessor {
             store: pm.store.clone(),
             msg_listeners: RwLock::new(MsgListeners::new()),
             funds_req_queue: RwLock::new(Vec::new()),
-            state: pm.state.clone(),
+            api: pm.api.clone(),
         }
     }
     /// creates a voucher with the given specification, setting its
@@ -132,7 +126,7 @@ where
             ));
         }
         // Load payment channel actor state
-        let (act, pch_state) = self.state.sa.load_paych_state(&ch).await?;
+        let (act, pch_state) = self.api.get_paych_state(ch, None).map_err(|e| Error::Other(e.to_string()))?;
         let heaviest_ts = get_heaviest_tipset(sm.blockstore())
             .map_err(|_| Error::HeaviestTipset)?
             .ok_or_else(|| Error::HeaviestTipset)?;
@@ -236,8 +230,7 @@ where
         // TODO update to include version(s)
         let enc = Serialized::serialize(UpdateChannelStateParams { sv, secret, proof })?;
 
-        let sm = self.state.sa.sm.read().await;
-        let ret = sm
+        let ret = self.api
             .call::<FullVerifier>(
                 &mut UnsignedMessage::builder()
                     .to(recipient)
@@ -250,7 +243,6 @@ where
             )
             .map_err(|e| Error::Other(e.to_string()))?;
 
-        drop(sm);
 
         if let Some(code) = ret.msg_rct {
             if code.exit_code != ExitCode::Ok {
@@ -261,14 +253,8 @@ where
         Ok(true)
     }
     async fn get_paych_recipient(&self, ch: &Address) -> Result<Address, Error> {
-        let sm = self.state.sa.sm.read().await;
-        let heaviest_ts = get_heaviest_tipset(sm.blockstore())
-            .map_err(|_| Error::HeaviestTipset)?
-            .ok_or_else(|| Error::HeaviestTipset)?;
-        let cid = heaviest_ts.parent_state();
-        let state: PaychState = sm
-            .load_actor_state(ch, cid)
-            .map_err(|err| Error::Other(err.to_string()))?;
+        let (_,state) = self.api.get_paych_state(*ch, None)
+        .map_err(|e| Error::Other(e.to_string()))?;
         Ok(state.to())
     }
     /// Adds voucher to store and returns the delta; the difference between the voucher amount and the highest
@@ -360,7 +346,6 @@ where
             secret: secret.to_vec(),
             proof: Vec::new(),
         })?;
-        let sm = self.state.sa.sm.read().await;
         let mut umsg = UnsignedMessage::builder()
             .to(ch)
             .from(ci.control)
@@ -369,14 +354,13 @@ where
             .build()
             .map_err(Error::Other)?;
 
-        sm.call::<FullVerifier>(&mut umsg, None)
-            .await
+        self.api.call::<FullVerifier>(&mut umsg, None)
+            // .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
         let smgs = self
-            .state
-            .mpool
-            .mpool_unsigned_msg_push(umsg, self.state.keystore.clone())
+            .api
+            .mpool_push_message(umsg)
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -393,7 +377,6 @@ where
         state: &PaychState,
         ch: Address,
     ) -> Result<HashMap<u64, LaneState>, Error> {
-        let sm = self.state.sa.sm.read().await;
         let ls_amt: Amt<LaneState, _> = Amt::load(&state.lane_states, sm.blockstore())
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -408,7 +391,6 @@ where
             })
             .map_err(|e| Error::Encoding(format!("failed to iterate over values in AMT: {}", e)))?;
 
-        drop(sm);
 
         // apply locally stored vouchers
         let st = self.store.read().await;
@@ -743,9 +725,8 @@ where
             .map_err(Error::Other)?;
 
         let smgs = self
-            .state
-            .mpool
-            .mpool_unsigned_msg_push(umsg, self.state.keystore.clone())
+            .api
+            .mpool_push_message(umsg)
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -774,21 +755,14 @@ where
         ch_id: String,
         mcid: &Cid,
     ) -> Result<(), Error>
-    where
-        DB: BlockStore + Send + Sync + 'static,
     {
-        let sm = self.state.sa.sm.read().await;
 
-        let (_, msg) = StateManager::wait_for_message(
-            sm.blockstore_cloned(),
-            sm.get_subscriber(),
-            mcid,
+        let (_, msg) = self.api.state_wait_msg(
+            *mcid,
             MESSAGE_CONFIDENCE,
         )
         .await
         .map_err(|e| Error::Other(e.to_string()))?;
-
-        drop(sm);
 
         let mut ret_data = Serialized::default();
         let mut store = self.store.write().await;
@@ -835,9 +809,8 @@ where
             .map_err(Error::Other)?;
 
         let smgs = self
-            .state
-            .mpool
-            .mpool_unsigned_msg_push(umsg, self.state.keystore.clone())
+            .api
+            .mpool_push_message::<FullVerifier>(umsg)
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -874,18 +847,12 @@ where
         channel_info: &'a mut ChannelInfo,
         mcid: Cid,
     ) -> Result<(), Error> {
-        let sm = self.state.sa.sm.read().await;
-
-        let (_, msg_receipt) = StateManager::wait_for_message(
-            sm.blockstore_cloned(),
-            sm.get_subscriber(),
-            &mcid,
+        let (_, msg_receipt) = self.api.state_wait_msg(
+            mcid,
             MESSAGE_CONFIDENCE,
         )
         .await
         .map_err(|e| Error::Other(e.to_string()))?;
-
-        drop(sm);
 
         if let Some(m) = msg_receipt {
             if m.exit_code != ExitCode::Ok {

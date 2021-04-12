@@ -167,14 +167,13 @@ pub(super) async fn start(config: Config) {
     let wallet = Arc::new(RwLock::new(Wallet::new(ks)));
     let mut paych_mgr = Manager::new(
         PaychStore::new(),
-        ResourceAccessor {
+DefaultPaychProvider {
+            sm: sm.clone(),
+            cs: chain_store.clone(),
             keystore: keystore.clone(),
             mpool,
-            sa: StateAccessor {
-                sm: Arc::new(RwLock::new(state_manager)),
-            },
             wallet,
-        },
+        }
     );
     task::spawn(async move {
         paych_mgr.start().await.unwrap();

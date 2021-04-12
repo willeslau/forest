@@ -75,7 +75,7 @@ where
 #[async_trait]
 impl<DB> Provider for MpoolRpcProvider<DB>
 where
-    DB: BlockStore + Sync + Send + 'static,
+    DB: BlockStore + Sync + std::marker::Send + 'static,
 {
     async fn subscribe_head_changes(&mut self) -> Subscriber<HeadChange> {
         self.subscriber.subscribe()

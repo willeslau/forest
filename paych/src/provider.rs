@@ -19,7 +19,7 @@ use vm::ActorState;
 use wallet::{Key, KeyStore, Wallet};
 
 #[async_trait]
-trait PaychProvider {
+pub trait PaychProvider {
     /// message_pool
     // StateAccountKey(context.Context, address.Address, types.TipSetKey) (address.Address, error)
     // StateWaitMsg(ctx context.Context, msg cid.Cid, confidence uint64) (*api.MsgLookup, error)
@@ -48,11 +48,11 @@ trait PaychProvider {
     async fn wallet_sign<V: ProofVerifier + Send + Sync + 'static>(&self, k: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>>;
     async fn state_network_version(&self, ts_key: TipsetKeys) -> Result<NetworkVersion, Box<dyn Error>>;
 
-    fn resolve_to_key_address(&self, addr: Address, ts: Tipset) -> Result<Address, Box<dyn Error>>;
+    fn resolve_to_key_address(&self, addr: Address, ts: Option<Tipset>) -> Result<Address, Box<dyn Error>>;
     fn get_paych_state(
         &self,
         addr: Address,
-        ts: Tipset,
+        ts: Option<Tipset>,
     ) -> Result<(ActorState, actor::paych::State), Box<dyn Error>>;
     fn call<V: ProofVerifier>(
         &self,
@@ -65,7 +65,6 @@ pub struct DefaultPaychProvider<DB, KS> {
     pub cs: Arc<ChainStore<DB>>,
     pub keystore: Arc<RwLock<KS>>,
     pub mpool: Arc<MessagePool<MpoolRpcProvider<DB>>>,
-    pub sa: StateAccessor<DB>,
     pub wallet: Arc<RwLock<Wallet<KS>>>,
 }
 
@@ -184,14 +183,14 @@ where
         Ok(self.sm.get_network_version(ts.epoch()))
     }
 
-    fn resolve_to_key_address(&self, addr: Address, ts: Tipset) -> Result<Address, Box<dyn Error>> {
+    fn resolve_to_key_address(&self, addr: Address, ts: Option<Tipset>) -> Result<Address, Box<dyn Error>> {
         todo!()
     }
 
     fn get_paych_state(
         &self,
         addr: Address,
-        ts: Tipset,
+        ts: Option<Tipset>,
     ) -> Result<(ActorState, actor::paych::State), Box<dyn Error>> {
         todo!()
     }
