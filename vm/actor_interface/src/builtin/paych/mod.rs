@@ -111,10 +111,17 @@ impl State {
 pub enum LaneState {
     V0(actorv0::paych::LaneState),
     V2(actorv2::paych::LaneState),
-    V3(actorv2::paych::LaneState),
+    V3(actorv3::paych::LaneState),
 }
 
 impl LaneState {
+    pub fn new(redeemed: BigInt, nonce: u64) -> Self {
+        // TODO: Not sure if/how we want to version this. Shouldnt matter because the fields havent changed.
+        Self::V3(actorv3::paych::LaneState {
+            redeemed,
+            nonce,
+        })
+    }
     pub fn redeemed(&self) -> &BigInt {
         match self {
             LaneState::V0(ls) => &ls.redeemed,

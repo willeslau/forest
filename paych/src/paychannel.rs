@@ -363,23 +363,14 @@ where
         state: &PaychState,
         ch: Address,
     ) -> Result<HashMap<u64, LaneState>, Error> {
-        let ls_amt: Amt<LaneState, _> = Amt::load(&state.lane_states, sm.blockstore())
-            .map_err(|e| Error::Other(e.to_string()))?;
-
         // Note: we use a map instead of an array to store laneStates because the
         // client sets the lane ID (the index) and potentially they could use a
         // very large index.
         let mut lane_states = HashMap::new();
-        state.for_each_lane_state(|i, v| {
-            lane_states.insert(i, v)
+        state.for_each_lane_state(self.api.bs(),|i, v| {
+            lane_states.insert(i, v.clone());
+            Ok(())
         });
-        // ls_amt
-        //     .for_each(|i, v| {
-        //         lane_states.insert(i, v.clone());
-        //         Ok(())
-        //     })
-        //     .map_err(|e| Error::Encoding(format!("failed to iterate over values in AMT: {}", e)))?;
-
 
         // apply locally stored vouchers
         let st = self.store.read().await;
@@ -396,10 +387,10 @@ where
             if !ok {
                 lane_states.insert(
                     v.voucher.lane() as u64,
-                    LaneState {
-                        redeemed: BigInt::zero(),
-                        nonce: 0,
-                    },
+                    LaneState::new(
+                        BigInt::zero(),
+                        0,
+                    ),
                 );
             }
             if let Some(mut ls) = lane_states.get_mut(&(v.voucher.lane() as u64)) {

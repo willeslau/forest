@@ -13,7 +13,7 @@ use libp2p::identity::{ed25519, Keypair};
 use log::{debug, info, trace};
 use message_pool::{MessagePool, MpoolConfig, MpoolRpcProvider};
 use paramfetch::{get_params_default, SectorSizeOpt};
-use paych::{Manager, PaychStore, ResourceAccessor, StateAccessor};
+use paych::{Manager, PaychStore, DefaultPaychProvider};
 use rpc::{start_rpc, RpcState};
 use state_manager::StateManager;
 use std::sync::Arc;
@@ -139,11 +139,12 @@ pub(super) async fn start(config: Config) {
         let sm = Arc::clone(&state_manager);
         let msg_pool = Arc::clone(&mpool);
         let rpc_listen = format!("127.0.0.1:{}", &config.rpc_port);
+        let chain_store = Arc::clone(&chain_store);
         Some(task::spawn(async move {
             info!("JSON RPC Endpoint at {}", &rpc_listen);
             start_rpc::<_, _, _, FullVerifier>(
                 Arc::new(RpcState {
-                    state_manager,
+                    state_manager: sm,
                     keystore: keystore_rpc,
                     mpool: msg_pool,
                     bad_blocks,
@@ -165,6 +166,7 @@ pub(super) async fn start(config: Config) {
 
     // start paych manager
     let wallet = Arc::new(RwLock::new(Wallet::new(ks)));
+    let sm = Arc::clone(&state_manager);
     let mut paych_mgr = Manager::new(
         PaychStore::new(),
 DefaultPaychProvider {
