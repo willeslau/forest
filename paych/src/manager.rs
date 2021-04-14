@@ -19,13 +19,14 @@ use std::collections::HashMap;
 use wallet::{KeyStore, Wallet};
 
 /// Thread safe payment channel management
-pub struct Manager<P>
+pub struct Manager<P, BS>
 where
-    P: PaychProvider + Send + Sync + 'static,
+    BS: BlockStore + Send + Sync + 'static,
+    P: PaychProvider<BS> + Send + Sync + 'static,
 {
     pub store: Arc<RwLock<PaychStore>>,
     #[allow(clippy::type_complexity)]
-    pub channels: Arc<RwLock<HashMap<String, Arc<ChannelAccessor<P>>>>>,
+    pub channels: Arc<RwLock<HashMap<String, Arc<ChannelAccessor<P, BS>>>>>,
     // pub state: Arc<ResourceAccessor<DB, KS>>,
     pub api: Arc<P>,
 }
@@ -64,15 +65,15 @@ pub struct ChannelAvailableFunds {
     pub voucher_redeemed_amt: BigInt,
 }
 
-impl<P> Manager<P>
+impl<P, BS> Manager<P, BS>
 where
-    // DB: BlockStore + Send + Sync,
+    BS: BlockStore + Send + Sync + 'static,
     // KS: KeyStore + Send + Sync + 'static,
-    P: PaychProvider + Send + Sync + 'static,
+    P: PaychProvider<BS> + Send + Sync + 'static,
 {
     // pub fn new(store: PaychStore, state: ResourceAccessor<DB, KS, P>, provider: P) -> Self {
     pub fn new(store: PaychStore,  provider: P) -> Self 
-    where P: PaychProvider
+    where P: PaychProvider<BS>
     {
         let api = Arc::new(provider);
         Manager {
@@ -241,7 +242,7 @@ where
     pub async fn inbound_channel_accessor(
         &mut self,
         ch: Address,
-    ) -> Result<Arc<ChannelAccessor<P>>, Error> {
+    ) -> Result<Arc<ChannelAccessor<P, BS>>, Error> {
         // Make sure channel is in store, or can be fetched from state, and that
         // the channel To address is owned by the wallet
         let ci = self.track_inbound_channel(ch).await?;
@@ -347,7 +348,7 @@ where
         &self,
         from: Address,
         to: Address,
-    ) -> Result<Arc<ChannelAccessor<P>>, Error> {
+    ) -> Result<Arc<ChannelAccessor<P, BS>>, Error> {
         let channels = self.channels.read().await;
         let key = accessor_cache_key(&from, &to);
 
@@ -380,7 +381,7 @@ where
         &self,
         from: Address,
         to: Address,
-    ) -> Result<Arc<ChannelAccessor<P>>, Error> {
+    ) -> Result<Arc<ChannelAccessor<P, BS>>, Error> {
         let key = accessor_cache_key(&from, &to);
         let ca = ChannelAccessor::new(&self);
         let mut channels = self.channels.write().await;
@@ -391,7 +392,7 @@ where
     async fn accessor_by_address(
         &self,
         ch: Address,
-    ) -> Result<Arc<ChannelAccessor<P>>, Error> {
+    ) -> Result<Arc<ChannelAccessor<P, BS>>, Error> {
         let store = self.store.read().await;
         let ci = store.by_address(ch).await?;
         self.accessor_by_from_to(ci.control, ci.target).await

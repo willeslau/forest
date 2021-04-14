@@ -17,6 +17,7 @@ use actor::paych::{
 use address::Address;
 use async_std::sync::{Arc, RwLock};
 use async_std::task;
+use blocks::Block;
 use blockstore::BlockStore;
 use cid::Cid;
 use encoding::Cbor;
@@ -35,26 +36,29 @@ use vm::{ExitCode, Serialized};
 
 const MESSAGE_CONFIDENCE: i64 = 5;
 
-pub struct ChannelAccessor<P>
+pub struct ChannelAccessor<P, BS>
 {
     store: Arc<RwLock<PaychStore>>,
     msg_listeners: RwLock<MsgListeners>,
     funds_req_queue: RwLock<Vec<FundsReq>>,
     api: Arc<P>,
+    _phantom_data: PhantomData<BS>,
 }
 
-impl<P> ChannelAccessor<P>
+impl<P, BS> ChannelAccessor<P, BS>
 where
-    P: PaychProvider + Sync + Send + 'static,
+    BS: BlockStore + Sync + Send + 'static,
+    P: PaychProvider<BS> + Sync + Send + 'static,
 {
-    pub fn new(pm: &Manager<P>) -> Self 
-    where P: PaychProvider
+    pub fn new(pm: &Manager<P, BS>) -> Self 
+    where P: PaychProvider<BS>
     {
         ChannelAccessor {
             store: pm.store.clone(),
             msg_listeners: RwLock::new(MsgListeners::new()),
             funds_req_queue: RwLock::new(Vec::new()),
             api: pm.api.clone(),
+            _phantom_data: PhantomData::default(),
         }
     }
     /// creates a voucher with the given specification, setting its
@@ -365,13 +369,16 @@ where
         // Note: we use a map instead of an array to store laneStates because the
         // client sets the lane ID (the index) and potentially they could use a
         // very large index.
-        let mut lane_states: HashMap<u64, LaneState> = HashMap::new();
-        ls_amt
-            .for_each(|i, v| {
-                lane_states.insert(i, v.clone());
-                Ok(())
-            })
-            .map_err(|e| Error::Encoding(format!("failed to iterate over values in AMT: {}", e)))?;
+        let mut lane_states = HashMap::new();
+        state.for_each_lane_state(|i, v| {
+            lane_states.insert(i, v)
+        });
+        // ls_amt
+        //     .for_each(|i, v| {
+        //         lane_states.insert(i, v.clone());
+        //         Ok(())
+        //     })
+        //     .map_err(|e| Error::Encoding(format!("failed to iterate over values in AMT: {}", e)))?;
 
 
         // apply locally stored vouchers

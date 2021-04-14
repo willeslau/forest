@@ -19,7 +19,7 @@ use vm::ActorState;
 use wallet::{Key, KeyStore, Wallet};
 
 #[async_trait]
-pub trait PaychProvider {
+pub trait PaychProvider<BS: BlockStore + Send + Sync + 'static> {
     /// message_pool
     // StateAccountKey(context.Context, address.Address, types.TipSetKey) (address.Address, error)
     // StateWaitMsg(ctx context.Context, msg cid.Cid, confidence uint64) (*api.MsgLookup, error)
@@ -60,6 +60,9 @@ pub trait PaychProvider {
         tipset: Option<Arc<Tipset>>,
     ) -> StateCallResult;
 
+    // BlockStore
+    fn bs(&self) -> &BS;
+    
 
     // State accessor
     async fn load_state_channel_info(
@@ -68,6 +71,8 @@ pub trait PaychProvider {
         dir: u8,
     ) -> Result<ChannelInfo, Box<dyn Error>>;
     fn next_lane_from_state(&self, st:  actor::paych::State) -> Result<u64, Box<dyn Error>>;
+
+
 }
 pub struct DefaultPaychProvider<DB, KS> {
     pub sm: Arc<StateManager<DB>>,
@@ -78,7 +83,7 @@ pub struct DefaultPaychProvider<DB, KS> {
 }
 
 #[async_trait]
-impl<DB, KS> PaychProvider for DefaultPaychProvider<DB, KS>
+impl<DB, KS> PaychProvider<DB> for DefaultPaychProvider<DB, KS>
 where
     DB: BlockStore + Sync + Send + 'static,
     KS: KeyStore + Sync + Send + 'static,
@@ -268,4 +273,7 @@ where
         })?;
         Ok(max_id + 1)
     }
+fn bs(&self) -> &DB { 
+    self.sm.chain_store().blockstore()
+ }
 }
