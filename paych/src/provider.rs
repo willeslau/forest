@@ -1,7 +1,7 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use crate::StateAccessor;
+use crate::{ChannelInfo, DIR_INBOUND, DIR_OUTBOUND};
 use address::{Address, Protocol};
 use async_std::sync::{Arc, RwLock};
 use async_trait::async_trait;
@@ -46,7 +46,7 @@ pub trait PaychProvider {
     ) -> Result<SignedMessage, Box<dyn Error>>;
     async fn wallet_has(&self, addr: Address) -> Result<bool, Box<dyn Error>>;
     async fn wallet_sign<V: ProofVerifier + Send + Sync + 'static>(&self, k: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>>;
-    async fn state_network_version(&self, ts_key: TipsetKeys) -> Result<NetworkVersion, Box<dyn Error>>;
+    async fn state_network_version(&self, ts_key: Option<TipsetKeys>) -> Result<NetworkVersion, Box<dyn Error>>;
 
     fn resolve_to_key_address(&self, addr: Address, ts: Option<Tipset>) -> Result<Address, Box<dyn Error>>;
     fn get_paych_state(
@@ -59,6 +59,15 @@ pub trait PaychProvider {
         message: &mut UnsignedMessage,
         tipset: Option<Arc<Tipset>>,
     ) -> StateCallResult;
+
+
+    // State accessor
+    async fn load_state_channel_info(
+        &self,
+        ch: Address,
+        dir: u8,
+    ) -> Result<ChannelInfo, Box<dyn Error>>;
+    fn next_lane_from_state(&self, st:  actor::paych::State) -> Result<u64, Box<dyn Error>>;
 }
 pub struct DefaultPaychProvider<DB, KS> {
     pub sm: Arc<StateManager<DB>>,
@@ -178,7 +187,12 @@ where
         Ok(sig)
     }
 
-    async fn state_network_version(&self, ts_key: TipsetKeys) -> Result<NetworkVersion, Box<dyn Error>> {
+    async fn state_network_version(&self, ts_key: Option<TipsetKeys>) -> Result<NetworkVersion, Box<dyn Error>> {
+        let ts_key = if let Some(ts_key) = ts_key {
+            ts_key
+        } else {
+            self.cs.heaviest_tipset().await.unwrap().key().clone()
+        };
         let ts = self.cs.tipset_from_keys(&ts_key).await?;
         Ok(self.sm.get_network_version(ts.epoch()))
     }
@@ -201,5 +215,57 @@ where
         tipset: Option<Arc<Tipset>>,
     ) -> StateCallResult {
         todo!()
+    }
+
+
+
+    // State accessor 
+
+    /// Returns channel info of provided address
+    async fn load_state_channel_info(
+        &self,
+        ch: Address,
+        dir: u8,
+    ) -> Result<ChannelInfo, Box<dyn Error>> {
+        let (_, st) = self.get_paych_state(ch, None)?;
+
+        let from = self.resolve_to_key_address(st.from(), None)?;
+        let to = self.resolve_to_key_address(st.to(), None)?;
+
+        let next_lane = self.next_lane_from_state(st)?;
+        if dir == DIR_INBOUND {
+            let ci = ChannelInfo::builder()
+                .next_lane(next_lane)
+                .direction(dir)
+                .control(to)
+                .target(from)
+                .build()?;
+            Ok(ci)
+        } else if dir == DIR_OUTBOUND {
+            let ci = ChannelInfo::builder()
+                .next_lane(next_lane)
+                .direction(dir)
+                .control(from)
+                .target(to)
+                .build()?;
+            Ok(ci)
+        } else {
+            Err("invalid Direction".to_string().into())
+        }
+    }
+    fn next_lane_from_state(&self, st: actor::paych::State) -> Result<u64, Box<dyn Error>> {
+        let lane_count = st
+            .lane_count(self.sm.chain_store().db.as_ref())?;
+        if lane_count == 0 {
+            return Ok(0);
+        }
+        let mut max_id = 0;
+        st.for_each_lane_state(self.sm.chain_store().db.as_ref(), |idx: u64, _| {
+            if idx > max_id {
+                max_id = idx;
+            }
+            Ok(())
+        })?;
+        Ok(max_id + 1)
     }
 }

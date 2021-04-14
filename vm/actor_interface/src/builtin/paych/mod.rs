@@ -17,7 +17,7 @@ pub type Method = actorv3::paych::Method;
 // /// Re-exports from the actors crate.
 // pub type SignedVoucher = actorv0::paych::SignedVoucher;
 // pub type ModVerifyParams = actorv0::paych::ModVerifyParams;
-
+pub type UpdateChannelStateParams = actorv3::paych::UpdateChannelStateParams;
 /// Paych actor state.
 #[derive(Serialize)]
 #[serde(untagged)]
@@ -293,6 +293,20 @@ pub struct MessageS {
     from: Address,
 }
 impl Message {
+    pub fn new(nv: ActorVersion, from: Address) -> Self {
+        match nv {
+            ActorVersion::V0 => {
+                Self::V0(MessageS{from})
+            }
+            ActorVersion::V2 => {
+                Self::V2(MessageS{from})
+            }
+            ActorVersion::V3 => {
+                Self::V3(MessageS{from})
+
+            }
+        }
+    }
     pub fn create(
         &self,
         to: Address,

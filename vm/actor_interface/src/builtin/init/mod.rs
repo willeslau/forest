@@ -13,6 +13,9 @@ pub static ADDRESS: &actorv3::INIT_ACTOR_ADDR = &actorv3::INIT_ACTOR_ADDR;
 /// Init actor method.
 pub type Method = actorv3::init::Method;
 
+/// Re-export of ExecReturn
+pub type ExecReturn = actorv3::init::ExecReturn;
+
 /// Init actor state.
 #[derive(Serialize)]
 #[serde(untagged)]

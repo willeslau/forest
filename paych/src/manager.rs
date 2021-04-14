@@ -1,14 +1,13 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use super::{ChannelInfo, Error, PaychStore, StateAccessor};
+use super::{ChannelInfo, Error, PaychStore, };
 use crate::{ChannelAccessor, PaychFundsRes, VoucherInfo, DIR_INBOUND, PaychProvider};
 use actor::paych::{Method, SignedVoucher};
 use address::Address;
 use async_std::sync::{Arc, RwLock};
 use async_std::task;
 use blockstore::BlockStore;
-use chain::get_heaviest_tipset;
 use cid::Cid;
 use encoding::Cbor;
 use fil_types::verifier::FullVerifier;
@@ -267,24 +266,17 @@ where
             }
         }
         let state_ci = self
-            .state
-            .sa
+            .api
             .load_state_channel_info(ch, DIR_INBOUND)
-            .await?;
-
-        let sm = self.state.sa.sm.read().await;
-        let heaviest_ts = get_heaviest_tipset(sm.blockstore())
-            .map_err(|_| Error::HeaviestTipset)?
-            .ok_or_else(|| Error::HeaviestTipset)?;
-        let addr = sm
-            .resolve_to_key_addr::<FullVerifier>(&state_ci.control, &heaviest_ts)
             .await
+            .map_err(|e| Error::Other(e.to_string()))?;
+
+        let addr = self.api
+            .resolve_to_key_address(state_ci.control, None)
             .map_err(|_| Error::NoAddress)?;
 
-        drop(sm);
 
-        let mut w = self.state.wallet.write().await;
-        if !w.has_key(&addr) {
+        if !self.api.wallet_has(addr).await.map_err(|e| Error::Other(e.to_string()))? {
             return Err(Error::NoAddress);
         }
 

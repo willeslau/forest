@@ -5,21 +5,23 @@ use super::Error;
 use crate::{ChannelAvailableFunds, ChannelInfo, FundsReq, Manager, MergeFundsReq, MsgListeners, PaychFundsRes, PaychProvider, PaychStore, VoucherInfo};
 extern crate log;
 use actor::account::State as AccountState;
-use actor::init::{ExecParams, ExecReturn};
+// use actor::init::{ExecParams, ExecReturn};
+// use actor::paych::{
+//     ConstructorParams, LaneState, Method::UpdateChannelState, SignedVoucher, State as PaychState,
+//     UpdateChannelStateParams,
+// };
 use actor::paych::{
-    ConstructorParams, LaneState, Method::UpdateChannelState, SignedVoucher, State as PaychState,
-    UpdateChannelStateParams,
+    LaneState, Method, SignedVoucher, State as PaychState,
 };
-use actor::{ExitCode, Serialized};
+// use actor::{ExitCode, Serialized};
 use address::Address;
 use async_std::sync::{Arc, RwLock};
 use async_std::task;
 use blockstore::BlockStore;
-use chain::get_heaviest_tipset;
 use cid::Cid;
 use encoding::Cbor;
 use fil_types::verifier::FullVerifier;
-use futures::channel::oneshot::{channel as oneshot_channel, Receiver};
+use futures::{TryFutureExt, channel::oneshot::{channel as oneshot_channel, Receiver}};
 use futures::StreamExt;
 use ipld_amt::Amt;
 use message::UnsignedMessage;
@@ -29,6 +31,7 @@ use state_manager::StateManager;
 use std::{collections::HashMap, marker::PhantomData};
 use std::ops::{Add, Sub};
 use wallet::KeyStore;
+use vm::{ExitCode, Serialized};
 
 const MESSAGE_CONFIDENCE: i64 = 5;
 
@@ -83,11 +86,9 @@ where
             .map_err(|e| Error::Other(e.to_string()))?;
 
         let sig = self
-            .state
-            .wallet
-            .write()
+            .api
+            .wallet_sign::<FullVerifier>(ci.control, &vb)
             .await
-            .sign(&ci.control, &vb)
             .map_err(|e| Error::Other(format!("failed to sign voucher: {}", e)))?;
         voucher.set_signature(sig);
 
@@ -119,7 +120,6 @@ where
         ch: Address,
         sv: SignedVoucher,
     ) -> Result<HashMap<u64, LaneState>, Error> {
-        let sm = self.state.sa.sm.read().await;
         if sv.channel_addr() != ch {
             return Err(Error::Other(
                 "voucher channel address doesn't match channel address".to_string(),
@@ -127,14 +127,10 @@ where
         }
         // Load payment channel actor state
         let (act, pch_state) = self.api.get_paych_state(ch, None).map_err(|e| Error::Other(e.to_string()))?;
-        let heaviest_ts = get_heaviest_tipset(sm.blockstore())
-            .map_err(|_| Error::HeaviestTipset)?
-            .ok_or_else(|| Error::HeaviestTipset)?;
-        let cid = heaviest_ts.parent_state();
-        let act_state: AccountState = sm
-            .load_actor_state(&pch_state.from(), cid)
-            .map_err(|err| Error::Other(err.to_string()))?;
-        let from = act_state.pubkey_address();
+
+        let from = pch_state.from();
+        let from = self.api.resolve_to_key_address(from, None)
+        .map_err(|e| Error::Other(e.to_string()))?;
 
         let vb = sv
             .signing_bytes()
@@ -227,18 +223,12 @@ where
 
         drop(st);
 
-        // TODO update to include version(s)
-        let enc = Serialized::serialize(UpdateChannelStateParams { sv, secret, proof })?;
+        let mb = self.message_builder(recipient).await.map_err(|e| Error::Other(e.to_string()))?;
+        let mut msg = mb.update(ch, sv, &secret).map_err(|e| Error::Other(e.to_string()))?;
 
         let ret = self.api
             .call::<FullVerifier>(
-                &mut UnsignedMessage::builder()
-                    .to(recipient)
-                    .from(ch)
-                    .method_num(UpdateChannelState as u64)
-                    .params(enc)
-                    .build()
-                    .map_err(Error::Other)?,
+                &mut msg,
                 None,
             )
             .map_err(|e| Error::Other(e.to_string()))?;
@@ -313,6 +303,12 @@ where
 
         Ok(delta)
     }
+    async fn message_builder(&self, from: Address) -> Result<actor::paych::Message, Box<dyn std::error::Error>> {
+        let nv = self.api.state_network_version(None).await?;
+        let act_version: actor::ActorVersion = nv.into();
+        Ok(actor::paych::Message::new(act_version, from))
+    }
+
     // intentionally unused, to be used with paych rpc
     async fn _submit_voucher(
         &self,
@@ -340,27 +336,13 @@ where
                 submitted: false,
             });
         }
+        let mb = self.message_builder(ci.control).await.map_err(|e| Error::Other(e.to_string()))?;
 
-        let enc = Serialized::serialize(UpdateChannelStateParams {
-            sv: sv.clone(),
-            secret: secret.to_vec(),
-            proof: Vec::new(),
-        })?;
-        let mut umsg = UnsignedMessage::builder()
-            .to(ch)
-            .from(ci.control)
-            .method_num(UpdateChannelState as u64)
-            .params(enc)
-            .build()
-            .map_err(Error::Other)?;
-
-        self.api.call::<FullVerifier>(&mut umsg, None)
-            // .await
-            .map_err(|e| Error::Other(e.to_string()))?;
+        let umsg = mb.update(ch, sv.clone(), secret).map_err(|e| Error::Other(e.to_string()))?;
 
         let smgs = self
             .api
-            .mpool_push_message(umsg)
+            .mpool_push_message::<FullVerifier>(umsg)
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -611,7 +593,7 @@ where
         // in the datastore but haven't yet been submitted.
         let mut total_redeemed = BigInt::default();
         if let Some(ch) = ch_info.channel {
-            let (_, pch_state) = self.state.sa.load_paych_state(&ch).await?;
+            let (_, pch_state) = self.api.get_paych_state(ch, None).map_err(|e| Error::Other(e.to_string()))?;
             let lane_states = self.lane_state(&pch_state, ch).await?;
 
             for (_, v) in lane_states.iter() {
@@ -708,25 +690,13 @@ where
         to: Address,
         amt: BigInt,
     ) -> Result<Cid, Error> {
-        let params: ConstructorParams = ConstructorParams { from, to };
-        let serialized =
-            Serialized::serialize(params).map_err(|err| Error::Other(err.to_string()))?;
-        let exec: ExecParams = ExecParams {
-            code_cid: Default::default(),
-            constructor_params: serialized,
-        };
-        let param = Serialized::serialize(exec).map_err(|err| Error::Other(err.to_string()))?;
-        let umsg: UnsignedMessage = UnsignedMessage::builder()
-            .from(from)
-            .to(to)
-            .value(amt.clone())
-            .params(param)
-            .build()
-            .map_err(Error::Other)?;
+
+        let mb = self.message_builder(from).await.map_err(|e| Error::Other(e.to_string()))?;
+        let umsg = mb.create(to, amt.clone()).map_err(|e| Error::Other(e.to_string()))?;
 
         let smgs = self
             .api
-            .mpool_push_message(umsg)
+            .mpool_push_message::<FullVerifier>(umsg)
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -775,7 +745,7 @@ where
             }
             ret_data = m.return_data;
         }
-        let exec_ret: ExecReturn = Serialized::deserialize(&ret_data)?;
+        let exec_ret: actor::init::ExecReturn = Serialized::deserialize(&ret_data)?;
 
         // store robust address of channel
         let mut ch_info = store.by_channel_id(&ch_id).await?;
