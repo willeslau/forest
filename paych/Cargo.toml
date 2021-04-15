@@ -33,3 +33,4 @@ fil_types = "0.1"
 
 vm = { package = "forest_vm", path = "../vm" }
 crypto = { package = "forest_crypto", version = "0.5" }
+forest_db = { path = "../node/db" }

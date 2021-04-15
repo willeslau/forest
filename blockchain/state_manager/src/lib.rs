@@ -51,7 +51,7 @@ use vm_circ_supply::GenesisInfo;
 type CidPair = (Cid, Cid);
 
 /// Type to represent invocation of state call results.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 pub struct InvocResult {
     #[serde(with = "unsigned_message::json")]
