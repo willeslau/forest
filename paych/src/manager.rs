@@ -1,8 +1,8 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use super::{ChannelInfo, Error, PaychStore, };
-use crate::{ChannelAccessor, PaychFundsRes, VoucherInfo, DIR_INBOUND, PaychProvider};
+use super::{ChannelInfo, Error, PaychStore};
+use crate::{ChannelAccessor, PaychFundsRes, PaychProvider, VoucherInfo, DIR_INBOUND};
 use actor::paych::{Method, SignedVoucher};
 use address::Address;
 use async_std::sync::{Arc, RwLock};
@@ -72,15 +72,16 @@ where
     P: PaychProvider<BS> + Send + Sync + 'static,
 {
     // pub fn new(store: PaychStore, state: ResourceAccessor<DB, KS, P>, provider: P) -> Self {
-    pub fn new(store: PaychStore,  provider: P) -> Self 
-    where P: PaychProvider<BS>
+    pub fn new(store: PaychStore, provider: P) -> Self
+    where
+        P: PaychProvider<BS>,
     {
         let api = Arc::new(provider);
         Manager {
             store: Arc::new(RwLock::new(store)),
             // state: Arc::new(state),
             channels: Arc::new(RwLock::new(HashMap::new())),
-            api: api
+            api: api,
         }
     }
     /// Start restarts tracking of any messages that were sent to chain.
@@ -272,12 +273,17 @@ where
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
-        let addr = self.api
+        let addr = self
+            .api
             .resolve_to_key_address(state_ci.control, None)
             .map_err(|_| Error::NoAddress)?;
 
-
-        if !self.api.wallet_has(addr).await.map_err(|e| Error::Other(e.to_string()))? {
+        if !self
+            .api
+            .wallet_has(addr)
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?
+        {
             return Err(Error::NoAddress);
         }
 
@@ -313,8 +319,8 @@ where
             .map_err(Error::Other)?;
 
         let smgs = self
-        .api
-        .mpool_push_message::<FullVerifier>(umsg)
+            .api
+            .mpool_push_message::<FullVerifier>(umsg)
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
@@ -389,10 +395,7 @@ where
             .insert(key, Arc::new(ca))
             .ok_or_else(|| Error::Other("inserting new channel accessor".to_string()))
     }
-    async fn accessor_by_address(
-        &self,
-        ch: Address,
-    ) -> Result<Arc<ChannelAccessor<P, BS>>, Error> {
+    async fn accessor_by_address(&self, ch: Address) -> Result<Arc<ChannelAccessor<P, BS>>, Error> {
         let store = self.store.read().await;
         let ci = store.by_address(ch).await?;
         self.accessor_by_from_to(ci.control, ci.target).await

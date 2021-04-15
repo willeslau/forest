@@ -37,32 +37,32 @@ impl MsgListeners {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use async_std::task;
-    use futures::StreamExt;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use async_std::task;
+//     use futures::StreamExt;
 
-    fn _test_cids() -> Vec<Cid> {
-        let cid1 = Cid::from_raw_cid("QmdmGQmRgRjazArukTbsXuuxmSHsMCcRYPAZoGhd6e3MuS").unwrap();
-        let cid2 = Cid::from_raw_cid("QmdvGCmN6YehBxS6Pyd991AiQRJ1ioqcvDsKGP2siJCTDL").unwrap();
-        vec![cid1, cid2]
-    }
+//     fn _test_cids() -> Vec<Cid> {
+//         let cid1 = Cid::from_raw_cid("QmdmGQmRgRjazArukTbsXuuxmSHsMCcRYPAZoGhd6e3MuS").unwrap();
+//         let cid2 = Cid::from_raw_cid("QmdvGCmN6YehBxS6Pyd991AiQRJ1ioqcvDsKGP2siJCTDL").unwrap();
+//         vec![cid1, cid2]
+//     }
 
-    #[test]
-    fn test_msg_listener() {
-        task::block_on(async {
-            let mut ml = MsgListeners::new();
+//     #[test]
+//     fn test_msg_listener() {
+//         task::block_on(async {
+//             let mut ml = MsgListeners::new();
 
-            let cid = Cid::from_raw_cid("QmdmGQmRgRjazArukTbsXuuxmSHsMCcRYPAZoGhd6e3MuS").unwrap();
-            let mut sub = ml.subscribe().await;
+//             let cid = Cid::from_raw_cid("QmdmGQmRgRjazArukTbsXuuxmSHsMCcRYPAZoGhd6e3MuS").unwrap();
+//             let mut sub = ml.subscribe().await;
 
-            ml.fire_msg_complete(cid.clone()).await;
+//             ml.fire_msg_complete(cid.clone()).await;
 
-            match sub.next().await.unwrap() {
-                Ok(c) => assert_eq!(c, cid),
-                _ => println!("error"),
-            };
-        })
-    }
-}
+//             match sub.next().await.unwrap() {
+//                 Ok(c) => assert_eq!(c, cid),
+//                 _ => println!("error"),
+//             };
+//         })
+//     }
+// }

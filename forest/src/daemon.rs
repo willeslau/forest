@@ -13,7 +13,7 @@ use libp2p::identity::{ed25519, Keypair};
 use log::{debug, info, trace};
 use message_pool::{MessagePool, MpoolConfig, MpoolRpcProvider};
 use paramfetch::{get_params_default, SectorSizeOpt};
-use paych::{Manager, PaychStore, DefaultPaychProvider};
+use paych::{DefaultPaychProvider, Manager, PaychStore};
 use rpc::{start_rpc, RpcState};
 use state_manager::StateManager;
 use std::sync::Arc;
@@ -169,13 +169,13 @@ pub(super) async fn start(config: Config) {
     let sm = Arc::clone(&state_manager);
     let mut paych_mgr = Manager::new(
         PaychStore::new(),
-DefaultPaychProvider {
+        DefaultPaychProvider {
             sm: sm.clone(),
             cs: chain_store.clone(),
             keystore: keystore.clone(),
             mpool,
             wallet,
-        }
+        },
     );
     task::spawn(async move {
         paych_mgr.start().await.unwrap();

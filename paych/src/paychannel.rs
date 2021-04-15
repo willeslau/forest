@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use super::Error;
-use crate::{ChannelAvailableFunds, ChannelInfo, FundsReq, Manager, MergeFundsReq, MsgListeners, PaychFundsRes, PaychProvider, PaychStore, VoucherInfo};
+use crate::{
+    ChannelAvailableFunds, ChannelInfo, FundsReq, Manager, MergeFundsReq, MsgListeners,
+    PaychFundsRes, PaychProvider, PaychStore, VoucherInfo,
+};
 extern crate log;
 use actor::account::State as AccountState;
 // use actor::init::{ExecParams, ExecReturn};
@@ -10,9 +13,7 @@ use actor::account::State as AccountState;
 //     ConstructorParams, LaneState, Method::UpdateChannelState, SignedVoucher, State as PaychState,
 //     UpdateChannelStateParams,
 // };
-use actor::paych::{
-    LaneState, Method, SignedVoucher, State as PaychState,
-};
+use actor::paych::{LaneState, Method, SignedVoucher, State as PaychState};
 // use actor::{ExitCode, Serialized};
 use address::Address;
 use async_std::sync::{Arc, RwLock};
@@ -22,22 +23,24 @@ use blockstore::BlockStore;
 use cid::Cid;
 use encoding::Cbor;
 use fil_types::verifier::FullVerifier;
-use futures::{TryFutureExt, channel::oneshot::{channel as oneshot_channel, Receiver}};
 use futures::StreamExt;
+use futures::{
+    channel::oneshot::{channel as oneshot_channel, Receiver},
+    TryFutureExt,
+};
 use ipld_amt::Amt;
 use message::UnsignedMessage;
 use num_bigint::BigInt;
 use num_traits::Zero;
 use state_manager::StateManager;
-use std::{collections::HashMap, marker::PhantomData};
 use std::ops::{Add, Sub};
-use wallet::KeyStore;
+use std::{collections::HashMap, marker::PhantomData};
 use vm::{ExitCode, Serialized};
+use wallet::KeyStore;
 
 const MESSAGE_CONFIDENCE: i64 = 5;
 
-pub struct ChannelAccessor<P, BS>
-{
+pub struct ChannelAccessor<P, BS> {
     store: Arc<RwLock<PaychStore>>,
     msg_listeners: RwLock<MsgListeners>,
     funds_req_queue: RwLock<Vec<FundsReq>>,
@@ -50,8 +53,9 @@ where
     BS: BlockStore + Sync + Send + 'static,
     P: PaychProvider<BS> + Sync + Send + 'static,
 {
-    pub fn new(pm: &Manager<P, BS>) -> Self 
-    where P: PaychProvider<BS>
+    pub fn new(pm: &Manager<P, BS>) -> Self
+    where
+        P: PaychProvider<BS>,
     {
         ChannelAccessor {
             store: pm.store.clone(),
@@ -130,11 +134,16 @@ where
             ));
         }
         // Load payment channel actor state
-        let (act, pch_state) = self.api.get_paych_state(ch, None).map_err(|e| Error::Other(e.to_string()))?;
+        let (act, pch_state) = self
+            .api
+            .get_paych_state(ch, None)
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         let from = pch_state.from();
-        let from = self.api.resolve_to_key_address(from, None)
-        .map_err(|e| Error::Other(e.to_string()))?;
+        let from = self
+            .api
+            .resolve_to_key_address(from, None)
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         let vb = sv
             .signing_bytes()
@@ -227,16 +236,18 @@ where
 
         drop(st);
 
-        let mb = self.message_builder(recipient).await.map_err(|e| Error::Other(e.to_string()))?;
-        let mut msg = mb.update(ch, sv, &secret).map_err(|e| Error::Other(e.to_string()))?;
-
-        let ret = self.api
-            .call::<FullVerifier>(
-                &mut msg,
-                None,
-            )
+        let mb = self
+            .message_builder(recipient)
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let mut msg = mb
+            .update(ch, sv, &secret)
             .map_err(|e| Error::Other(e.to_string()))?;
 
+        let ret = self
+            .api
+            .call::<FullVerifier>(&mut msg, None)
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         if let Some(code) = ret.msg_rct {
             if code.exit_code != ExitCode::Ok {
@@ -247,8 +258,10 @@ where
         Ok(true)
     }
     async fn get_paych_recipient(&self, ch: &Address) -> Result<Address, Error> {
-        let (_,state) = self.api.get_paych_state(*ch, None)
-        .map_err(|e| Error::Other(e.to_string()))?;
+        let (_, state) = self
+            .api
+            .get_paych_state(*ch, None)
+            .map_err(|e| Error::Other(e.to_string()))?;
         Ok(state.to())
     }
     /// Adds voucher to store and returns the delta; the difference between the voucher amount and the highest
@@ -307,7 +320,10 @@ where
 
         Ok(delta)
     }
-    async fn message_builder(&self, from: Address) -> Result<actor::paych::Message, Box<dyn std::error::Error>> {
+    async fn message_builder(
+        &self,
+        from: Address,
+    ) -> Result<actor::paych::Message, Box<dyn std::error::Error>> {
         let nv = self.api.state_network_version(None).await?;
         let act_version: actor::ActorVersion = nv.into();
         Ok(actor::paych::Message::new(act_version, from))
@@ -340,9 +356,14 @@ where
                 submitted: false,
             });
         }
-        let mb = self.message_builder(ci.control).await.map_err(|e| Error::Other(e.to_string()))?;
+        let mb = self
+            .message_builder(ci.control)
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?;
 
-        let umsg = mb.update(ch, sv.clone(), secret).map_err(|e| Error::Other(e.to_string()))?;
+        let umsg = mb
+            .update(ch, sv.clone(), secret)
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         let smgs = self
             .api
@@ -367,7 +388,7 @@ where
         // client sets the lane ID (the index) and potentially they could use a
         // very large index.
         let mut lane_states = HashMap::new();
-        state.for_each_lane_state(self.api.bs(),|i, v| {
+        state.for_each_lane_state(self.api.bs(), |i, v| {
             lane_states.insert(i, v.clone());
             Ok(())
         });
@@ -385,13 +406,7 @@ where
 
             let ok = lane_states.contains_key(&(v.voucher.lane() as u64));
             if !ok {
-                lane_states.insert(
-                    v.voucher.lane() as u64,
-                    LaneState::new(
-                        BigInt::zero(),
-                        0,
-                    ),
-                );
+                lane_states.insert(v.voucher.lane() as u64, LaneState::new(BigInt::zero(), 0));
             }
             if let Some(mut ls) = lane_states.get_mut(&(v.voucher.lane() as u64)) {
                 if v.voucher.nonce() < ls.nonce() {
@@ -591,7 +606,10 @@ where
         // in the datastore but haven't yet been submitted.
         let mut total_redeemed = BigInt::default();
         if let Some(ch) = ch_info.channel {
-            let (_, pch_state) = self.api.get_paych_state(ch, None).map_err(|e| Error::Other(e.to_string()))?;
+            let (_, pch_state) = self
+                .api
+                .get_paych_state(ch, None)
+                .map_err(|e| Error::Other(e.to_string()))?;
             let lane_states = self.lane_state(&pch_state, ch).await?;
 
             for (_, v) in lane_states.iter() {
@@ -688,9 +706,13 @@ where
         to: Address,
         amt: BigInt,
     ) -> Result<Cid, Error> {
-
-        let mb = self.message_builder(from).await.map_err(|e| Error::Other(e.to_string()))?;
-        let umsg = mb.create(to, amt.clone()).map_err(|e| Error::Other(e.to_string()))?;
+        let mb = self
+            .message_builder(from)
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let umsg = mb
+            .create(to, amt.clone())
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         let smgs = self
             .api
@@ -722,15 +744,12 @@ where
         self: Arc<Self>,
         ch_id: String,
         mcid: &Cid,
-    ) -> Result<(), Error>
-    {
-
-        let (_, msg) = self.api.state_wait_msg(
-            *mcid,
-            MESSAGE_CONFIDENCE,
-        )
-        .await
-        .map_err(|e| Error::Other(e.to_string()))?;
+    ) -> Result<(), Error> {
+        let (_, msg) = self
+            .api
+            .state_wait_msg(*mcid, MESSAGE_CONFIDENCE)
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         let mut ret_data = Serialized::default();
         let mut store = self.store.write().await;
@@ -815,12 +834,11 @@ where
         channel_info: &'a mut ChannelInfo,
         mcid: Cid,
     ) -> Result<(), Error> {
-        let (_, msg_receipt) = self.api.state_wait_msg(
-            mcid,
-            MESSAGE_CONFIDENCE,
-        )
-        .await
-        .map_err(|e| Error::Other(e.to_string()))?;
+        let (_, msg_receipt) = self
+            .api
+            .state_wait_msg(mcid, MESSAGE_CONFIDENCE)
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?;
 
         if let Some(m) = msg_receipt {
             if m.exit_code != ExitCode::Ok {

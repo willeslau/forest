@@ -45,10 +45,21 @@ pub trait PaychProvider<BS: BlockStore + Send + Sync + 'static> {
         // max_fee: Option<MessageSendSpec>,
     ) -> Result<SignedMessage, Box<dyn Error>>;
     async fn wallet_has(&self, addr: Address) -> Result<bool, Box<dyn Error>>;
-    async fn wallet_sign<V: ProofVerifier + Send + Sync + 'static>(&self, k: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>>;
-    async fn state_network_version(&self, ts_key: Option<TipsetKeys>) -> Result<NetworkVersion, Box<dyn Error>>;
+    async fn wallet_sign<V: ProofVerifier + Send + Sync + 'static>(
+        &self,
+        k: Address,
+        msg: &[u8],
+    ) -> Result<Signature, Box<dyn Error>>;
+    async fn state_network_version(
+        &self,
+        ts_key: Option<TipsetKeys>,
+    ) -> Result<NetworkVersion, Box<dyn Error>>;
 
-    fn resolve_to_key_address(&self, addr: Address, ts: Option<Tipset>) -> Result<Address, Box<dyn Error>>;
+    fn resolve_to_key_address(
+        &self,
+        addr: Address,
+        ts: Option<Tipset>,
+    ) -> Result<Address, Box<dyn Error>>;
     fn get_paych_state(
         &self,
         addr: Address,
@@ -62,7 +73,6 @@ pub trait PaychProvider<BS: BlockStore + Send + Sync + 'static> {
 
     // BlockStore
     fn bs(&self) -> &BS;
-    
 
     // State accessor
     async fn load_state_channel_info(
@@ -70,9 +80,7 @@ pub trait PaychProvider<BS: BlockStore + Send + Sync + 'static> {
         ch: Address,
         dir: u8,
     ) -> Result<ChannelInfo, Box<dyn Error>>;
-    fn next_lane_from_state(&self, st:  actor::paych::State) -> Result<u64, Box<dyn Error>>;
-
-
+    fn next_lane_from_state(&self, st: actor::paych::State) -> Result<u64, Box<dyn Error>>;
 }
 pub struct DefaultPaychProvider<DB, KS> {
     pub sm: Arc<StateManager<DB>>,
@@ -163,16 +171,18 @@ where
         Ok(key)
     }
 
-    async fn wallet_sign<V>(&self, addr: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>> 
+    async fn wallet_sign<V>(&self, addr: Address, msg: &[u8]) -> Result<Signature, Box<dyn Error>>
     where
-    V: ProofVerifier + Send + Sync + 'static,{
+        V: ProofVerifier + Send + Sync + 'static,
+    {
         let heaviest_tipset = self
             .sm
             .chain_store()
             .heaviest_tipset()
             .await
             .ok_or_else(|| "Could not get heaviest tipset".to_string())?;
-        let key_addr = self.sm
+        let key_addr = self
+            .sm
             .resolve_to_key_addr::<V>(&addr, &heaviest_tipset)
             .await?;
         let keystore = &mut *self.keystore.write().await;
@@ -183,16 +193,15 @@ where
                 Key::try_from(key_info)?
             }
         };
-    
-        let sig = wallet::sign(
-            *key.key_info.key_type(),
-            key.key_info.private_key(),
-            msg,
-        )?;
+
+        let sig = wallet::sign(*key.key_info.key_type(), key.key_info.private_key(), msg)?;
         Ok(sig)
     }
 
-    async fn state_network_version(&self, ts_key: Option<TipsetKeys>) -> Result<NetworkVersion, Box<dyn Error>> {
+    async fn state_network_version(
+        &self,
+        ts_key: Option<TipsetKeys>,
+    ) -> Result<NetworkVersion, Box<dyn Error>> {
         let ts_key = if let Some(ts_key) = ts_key {
             ts_key
         } else {
@@ -202,7 +211,11 @@ where
         Ok(self.sm.get_network_version(ts.epoch()))
     }
 
-    fn resolve_to_key_address(&self, addr: Address, ts: Option<Tipset>) -> Result<Address, Box<dyn Error>> {
+    fn resolve_to_key_address(
+        &self,
+        addr: Address,
+        ts: Option<Tipset>,
+    ) -> Result<Address, Box<dyn Error>> {
         todo!()
     }
 
@@ -222,9 +235,7 @@ where
         todo!()
     }
 
-
-
-    // State accessor 
+    // State accessor
 
     /// Returns channel info of provided address
     async fn load_state_channel_info(
@@ -259,8 +270,7 @@ where
         }
     }
     fn next_lane_from_state(&self, st: actor::paych::State) -> Result<u64, Box<dyn Error>> {
-        let lane_count = st
-            .lane_count(self.sm.chain_store().db.as_ref())?;
+        let lane_count = st.lane_count(self.sm.chain_store().db.as_ref())?;
         if lane_count == 0 {
             return Ok(0);
         }
@@ -273,7 +283,7 @@ where
         })?;
         Ok(max_id + 1)
     }
-fn bs(&self) -> &DB { 
-    self.sm.chain_store().blockstore()
- }
+    fn bs(&self) -> &DB {
+        self.sm.chain_store().blockstore()
+    }
 }

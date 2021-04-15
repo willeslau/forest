@@ -12,6 +12,7 @@ mod paych_store;
 mod paychannel;
 mod provider;
 // mod state;
+mod test_provider;
 
 pub use errors::*;
 pub use funds_req::*;
@@ -21,3 +22,4 @@ pub use paych_store::*;
 pub use paychannel::*;
 // pub use state::*;
 pub use provider::*;
+use test_provider::*;

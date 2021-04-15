@@ -1,6 +1,8 @@
+use crate::ActorVersion;
 use actorv0::{Serialized, TokenAmount};
 use address::Address;
 use clock::ChainEpoch;
+use crypto::Signature;
 use encoding::to_vec;
 use forest_message::UnsignedMessage;
 use ipld_blockstore::BlockStore;
@@ -8,8 +10,6 @@ use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use vm::ActorState;
-use crypto::Signature;
-use crate::ActorVersion;
 
 /// Paych actor method.
 pub type Method = actorv3::paych::Method;
@@ -19,7 +19,7 @@ pub type Method = actorv3::paych::Method;
 // pub type ModVerifyParams = actorv0::paych::ModVerifyParams;
 pub type UpdateChannelStateParams = actorv3::paych::UpdateChannelStateParams;
 /// Paych actor state.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum State {
     V0(actorv0::paych::State),
@@ -117,10 +117,7 @@ pub enum LaneState {
 impl LaneState {
     pub fn new(redeemed: BigInt, nonce: u64) -> Self {
         // TODO: Not sure if/how we want to version this. Shouldnt matter because the fields havent changed.
-        Self::V3(actorv3::paych::LaneState {
-            redeemed,
-            nonce,
-        })
+        Self::V3(actorv3::paych::LaneState { redeemed, nonce })
     }
     pub fn redeemed(&self) -> &BigInt {
         match self {
@@ -173,32 +170,32 @@ pub enum SignedVoucher {
 impl SignedVoucher {
     pub fn merges(&self) -> Vec<Merge> {
         let merges = match self {
-            SignedVoucher::V0(sv) => {
-                sv.merges.iter().map(|m| {
-                    Merge {
-                        lane: m.lane,
-                        nonce:m.nonce
-                    }
-                }).collect()
-            }
-            SignedVoucher::V2(sv) => {         
-                sv.merges.iter().map(|m| {
-                    Merge {
-                        lane: m.lane,
-                        nonce:m.nonce
-                    }
-                }).collect()
-            }
-            SignedVoucher::V3(sv) => {                
-                sv.merges.iter().map(|m| {
-                Merge {
+            SignedVoucher::V0(sv) => sv
+                .merges
+                .iter()
+                .map(|m| Merge {
+                    lane: m.lane,
+                    nonce: m.nonce,
+                })
+                .collect(),
+            SignedVoucher::V2(sv) => sv
+                .merges
+                .iter()
+                .map(|m| Merge {
+                    lane: m.lane,
+                    nonce: m.nonce,
+                })
+                .collect(),
+            SignedVoucher::V3(sv) => sv
+                .merges
+                .iter()
+                .map(|m| Merge {
                     lane: m.lane as u64,
-                    nonce:m.nonce
-                }
-            }).collect()}
+                    nonce: m.nonce,
+                })
+                .collect(),
         };
         merges
-        
     }
     pub fn lane(&self) -> usize {
         match self {
@@ -259,30 +256,27 @@ impl SignedVoucher {
     pub fn set_channel_addr(&mut self, addr: Address) {
         match self {
             SignedVoucher::V0(sv) => sv.channel_addr = addr,
-            SignedVoucher::V2(sv) => sv.channel_addr= addr,
-            SignedVoucher::V3(sv) => sv.channel_addr= addr,
+            SignedVoucher::V2(sv) => sv.channel_addr = addr,
+            SignedVoucher::V3(sv) => sv.channel_addr = addr,
         }
     }
-    pub fn extra(&self) -> Option<ModVerifyParams>{
+    pub fn extra(&self) -> Option<ModVerifyParams> {
         match self {
-            SignedVoucher::V0(sv) => {sv.extra.as_ref().map(|mvp| ModVerifyParams {
+            SignedVoucher::V0(sv) => sv.extra.as_ref().map(|mvp| ModVerifyParams {
                 actor: mvp.actor,
                 method: mvp.method as u64,
                 data: mvp.data.clone(),
-                
-            })}
-            SignedVoucher::V2(sv) => {sv.extra.as_ref().map(|mvp| ModVerifyParams {
+            }),
+            SignedVoucher::V2(sv) => sv.extra.as_ref().map(|mvp| ModVerifyParams {
                 actor: mvp.actor,
                 method: mvp.method as u64,
                 data: mvp.data.clone(),
-                
-            })}
-            SignedVoucher::V3(sv) => {sv.extra.as_ref().map(|mvp| ModVerifyParams {
+            }),
+            SignedVoucher::V3(sv) => sv.extra.as_ref().map(|mvp| ModVerifyParams {
                 actor: mvp.actor,
                 method: mvp.method as u64,
                 data: mvp.data.clone(),
-                
-            })}
+            }),
         }
     }
 }
@@ -302,16 +296,9 @@ pub struct MessageS {
 impl Message {
     pub fn new(nv: ActorVersion, from: Address) -> Self {
         match nv {
-            ActorVersion::V0 => {
-                Self::V0(MessageS{from})
-            }
-            ActorVersion::V2 => {
-                Self::V2(MessageS{from})
-            }
-            ActorVersion::V3 => {
-                Self::V3(MessageS{from})
-
-            }
+            ActorVersion::V0 => Self::V0(MessageS { from }),
+            ActorVersion::V2 => Self::V2(MessageS { from }),
+            ActorVersion::V3 => Self::V3(MessageS { from }),
         }
     }
     pub fn create(
