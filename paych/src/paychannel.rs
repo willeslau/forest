@@ -147,15 +147,16 @@ where
 
         // Check the voucher against the highest known voucher nonce / value
         let lane_states = self.lane_state(&pch_state, ch).await?;
-        let ls = lane_states
-            .get(&(sv.lane() as u64))
-            .ok_or_else(|| Error::Other("no lane state for given nonce".to_owned()))?;
-        if ls.nonce() >= sv.nonce() {
-            return Err(Error::Other("nonce too low".to_owned()));
-        }
-        if ls.redeemed() >= sv.amount() {
-            return Err(Error::Other("voucher amount is lower than amount for voucher amount for voucher with lower nonce".to_owned()));
-        }
+        if let Some( ls) = lane_states
+            .get(&(sv.lane() as u64)) {
+                if ls.nonce() >= sv.nonce() {
+                    return Err(Error::Other("nonce too low".to_owned()));
+                }
+                if ls.redeemed() >= sv.amount() {
+                    return Err(Error::Other("voucher amount is lower than amount for voucher amount for voucher with lower nonce".to_owned()));
+                }
+            }
+
 
         // Total redeemed is the total redeemed amount for all lanes, including
         // the new voucher

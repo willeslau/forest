@@ -169,13 +169,13 @@ pub(super) async fn start(config: Config) {
     let sm = Arc::clone(&state_manager);
     let mut paych_mgr = Manager::new(
         PaychStore::new(),
-DefaultPaychProvider {
+        Arc::new(DefaultPaychProvider {
             sm: sm.clone(),
             cs: chain_store.clone(),
             keystore: keystore.clone(),
             mpool,
             wallet,
-        }
+        }),
     );
     task::spawn(async move {
         paych_mgr.start().await.unwrap();

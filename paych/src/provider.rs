@@ -32,7 +32,7 @@ pub trait PaychProvider<BS: BlockStore + Send + Sync + 'static> {
     fn state_account_key(
         &self,
         addr: Address,
-        ts_key: TipsetKeys,
+        ts_key: Option<TipsetKeys>,
     ) -> Result<Address, Box<dyn Error>>;
     async fn state_wait_msg(
         &self,
@@ -69,10 +69,49 @@ pub trait PaychProvider<BS: BlockStore + Send + Sync + 'static> {
         &self,
         ch: Address,
         dir: u8,
-    ) -> Result<ChannelInfo, Box<dyn Error>>;
-    fn next_lane_from_state(&self, st:  actor::paych::State) -> Result<u64, Box<dyn Error>>;
+    ) -> Result<ChannelInfo, Box<dyn Error>> {
+        let (_, st) = self.get_paych_state(ch, None)?;
 
+        let from = self.resolve_to_key_address(st.from(), None)?;
+        let to = self.resolve_to_key_address(st.to(), None)?;
 
+        let next_lane = self.next_lane_from_state(st)?;
+        if dir == DIR_INBOUND {
+            let ci = ChannelInfo::builder()
+                .next_lane(next_lane)
+                .direction(dir)
+                .control(to)
+                .target(from)
+                .channel(Some(ch))
+                .build()?;
+            Ok(ci)
+        } else if dir == DIR_OUTBOUND {
+            let ci = ChannelInfo::builder()
+                .next_lane(next_lane)
+                .direction(dir)
+                .control(from)
+                .target(to)
+                .channel(Some(ch))
+                .build()?;
+            Ok(ci)
+        } else {
+            Err("invalid Direction".to_string().into())
+        }
+    }
+    fn next_lane_from_state(&self, st: actor::paych::State) -> Result<u64, Box<dyn Error>> {
+        let lane_count = st.lane_count(self.bs())?;
+        if lane_count == 0 {
+            return Ok(0);
+        }
+        let mut max_id = 0;
+        st.for_each_lane_state(self.bs(), |idx: u64, _| {
+            if idx > max_id {
+                max_id = idx;
+            }
+            Ok(())
+        })?;
+        Ok(max_id + 1)
+    }
 }
 pub struct DefaultPaychProvider<DB, KS> {
     pub sm: Arc<StateManager<DB>>,
@@ -91,7 +130,7 @@ where
     fn state_account_key(
         &self,
         addr: Address,
-        ts_key: TipsetKeys,
+        ts_key: Option<TipsetKeys>,
     ) -> Result<Address, Box<dyn Error>> {
         todo!()
     }
@@ -222,58 +261,7 @@ where
         todo!()
     }
 
-
-
-    // State accessor 
-
-    /// Returns channel info of provided address
-    async fn load_state_channel_info(
-        &self,
-        ch: Address,
-        dir: u8,
-    ) -> Result<ChannelInfo, Box<dyn Error>> {
-        let (_, st) = self.get_paych_state(ch, None)?;
-
-        let from = self.resolve_to_key_address(st.from(), None)?;
-        let to = self.resolve_to_key_address(st.to(), None)?;
-
-        let next_lane = self.next_lane_from_state(st)?;
-        if dir == DIR_INBOUND {
-            let ci = ChannelInfo::builder()
-                .next_lane(next_lane)
-                .direction(dir)
-                .control(to)
-                .target(from)
-                .build()?;
-            Ok(ci)
-        } else if dir == DIR_OUTBOUND {
-            let ci = ChannelInfo::builder()
-                .next_lane(next_lane)
-                .direction(dir)
-                .control(from)
-                .target(to)
-                .build()?;
-            Ok(ci)
-        } else {
-            Err("invalid Direction".to_string().into())
-        }
+    fn bs(&self) -> &DB {
+        self.sm.chain_store().blockstore()
     }
-    fn next_lane_from_state(&self, st: actor::paych::State) -> Result<u64, Box<dyn Error>> {
-        let lane_count = st
-            .lane_count(self.sm.chain_store().db.as_ref())?;
-        if lane_count == 0 {
-            return Ok(0);
-        }
-        let mut max_id = 0;
-        st.for_each_lane_state(self.sm.chain_store().db.as_ref(), |idx: u64, _| {
-            if idx > max_id {
-                max_id = idx;
-            }
-            Ok(())
-        })?;
-        Ok(max_id + 1)
-    }
-fn bs(&self) -> &DB { 
-    self.sm.chain_store().blockstore()
- }
 }

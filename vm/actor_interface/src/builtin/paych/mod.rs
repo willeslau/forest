@@ -19,12 +19,12 @@ pub type Method = actorv3::paych::Method;
 // pub type ModVerifyParams = actorv0::paych::ModVerifyParams;
 pub type UpdateChannelStateParams = actorv3::paych::UpdateChannelStateParams;
 /// Paych actor state.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum State {
     V0(actorv0::paych::State),
     V2(actorv2::paych::State),
-    V3(actorv2::paych::State),
+    V3(actorv3::paych::State),
 }
 
 impl State {
@@ -106,7 +106,7 @@ impl State {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum LaneState {
     V0(actorv0::paych::LaneState),

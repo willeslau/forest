@@ -231,7 +231,11 @@ impl PaychStore {
     /// Stores a channel, returning an error if the channel was already
     /// being tracked
     pub async fn track_channel(&mut self, ch: ChannelInfo) -> Result<ChannelInfo, Error> {
+        println!("heh555");
+
         let addr = ch.channel.ok_or_else(|| Error::NoAddress)?;
+        println!("heh5556");
+
         match self.by_address(addr).await {
             Err(Error::ChannelNotTracked) => {
                 self.put_channel_info(&mut ch.clone()).await?;

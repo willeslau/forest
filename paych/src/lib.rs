@@ -11,6 +11,7 @@ mod msg_listener;
 mod paych_store;
 mod paychannel;
 mod provider;
+mod test_provider;
 // mod state;
 
 pub use errors::*;
@@ -21,3 +22,4 @@ pub use paych_store::*;
 pub use paychannel::*;
 // pub use state::*;
 pub use provider::*;
+pub use test_provider::*;

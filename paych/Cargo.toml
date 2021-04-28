@@ -30,6 +30,9 @@ wallet = { package = "key_management", path = "../key_management/", features = [
 num-traits = "0.2"
 async-trait = "0.1"
 fil_types = "0.1"
+networks = { path = "../types/networks" }
 
 vm = { package = "forest_vm", path = "../vm" }
 crypto = { package = "forest_crypto", version = "0.5" }
+
+forest_db = { package = "forest_db", version = "0.1" }

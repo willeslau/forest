@@ -11,7 +11,7 @@ use blockstore::BlockStore;
 use cid::Cid;
 use encoding::Cbor;
 use fil_types::verifier::FullVerifier;
-use futures::stream::{FuturesUnordered, StreamExt};
+use futures::{TryFutureExt, stream::{FuturesUnordered, StreamExt}};
 use message::UnsignedMessage;
 use message_pool::{MessagePool, MpoolRpcProvider};
 use num_bigint::BigInt;
@@ -72,15 +72,15 @@ where
     P: PaychProvider<BS> + Send + Sync + 'static,
 {
     // pub fn new(store: PaychStore, state: ResourceAccessor<DB, KS, P>, provider: P) -> Self {
-    pub fn new(store: PaychStore,  provider: P) -> Self 
-    where P: PaychProvider<BS>
+    pub fn new(store: PaychStore, provider: Arc<P>) -> Self
+    where
+        P: PaychProvider<BS>,
     {
-        let api = Arc::new(provider);
         Manager {
             store: Arc::new(RwLock::new(store)),
             // state: Arc::new(state),
             channels: Arc::new(RwLock::new(HashMap::new())),
-            api: api
+            api: provider,
         }
     }
     /// Start restarts tracking of any messages that were sent to chain.
@@ -206,7 +206,10 @@ where
         ch: Address,
         sv: SignedVoucher,
     ) -> Result<(), Error> {
+        println!("heh1");
         let ca = self.inbound_channel_accessor(ch).await?;
+        println!("heh2");
+
         let _ = ca.check_voucher_valid(ch, sv).await?;
         Ok(())
     }
@@ -246,6 +249,7 @@ where
         // Make sure channel is in store, or can be fetched from state, and that
         // the channel To address is owned by the wallet
         let ci = self.track_inbound_channel(ch).await?;
+        println!("heh3333333");
 
         let from = ci.target;
         let to = ci.control;
@@ -272,12 +276,21 @@ where
             .await
             .map_err(|e| Error::Other(e.to_string()))?;
 
-        let addr = self.api
-            .resolve_to_key_address(state_ci.control, None)
-            .map_err(|_| Error::NoAddress)?;
+        let to = state_ci.control;
+        println!("tooo: {}", to);
+        let to_key = self.api.state_account_key(to, None).map_err(|e| Error::Other(e.to_string()))?;
+        println!("tooo key {}", to_key);
+        // let has = self.api.wallet_has(to_key).await.map_err(|e| Error::Other(e.to_string()))?;
 
 
-        if !self.api.wallet_has(addr).await.map_err(|e| Error::Other(e.to_string()))? {
+        if !self
+            .api
+            .wallet_has(to_key)
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?
+        {
+            println!("heh444444444444");
+
             return Err(Error::NoAddress);
         }
 
@@ -358,19 +371,24 @@ where
             return Ok(channel.clone());
         }
         drop(channels);
+        println!("do we get here?");
+        // channel accessor is not in cache so take a write lock
+        let channel_write = self.channels.read().await;
 
-        // channel accessor is not in cache so take a write lock, and create new entry in cache
-        let mut channel_write = self.channels.write().await;
-        let ca = ChannelAccessor::new(&self);
-        channel_write
-            .insert(key.clone(), Arc::new(ca))
-            .ok_or_else(|| Error::Other("insert new channel accessor".to_string()))?;
-        let channel_check = self.channels.read().await;
-        let op_locked = channel_check.get(&key);
+        // Need to check cache again in case it was updated between releasing read
+	    // lock and taking write lock
+        println!("do we get here?1");
+
+        let op_locked = channel_write.get(&key);
         if let Some(channel) = op_locked {
+            println!("do we get here?2");
+
             Ok(channel.clone())
         } else {
-            Ok(self.add_accessor_to_cache(from, to).await?)
+            println!("do we get here?3");
+
+            drop(channel_write);
+            Ok(self.add_accessor_to_cache(from, to).await)
         }
     }
     /// Add a channel accessor to the cache. Note that the
@@ -381,13 +399,13 @@ where
         &self,
         from: Address,
         to: Address,
-    ) -> Result<Arc<ChannelAccessor<P, BS>>, Error> {
+    ) -> Arc<ChannelAccessor<P, BS>> {
         let key = accessor_cache_key(&from, &to);
-        let ca = ChannelAccessor::new(&self);
+        let ca = Arc::new(ChannelAccessor::new(&self));
         let mut channels = self.channels.write().await;
         channels
-            .insert(key, Arc::new(ca))
-            .ok_or_else(|| Error::Other("inserting new channel accessor".to_string()))
+            .insert(key, ca.clone());
+        ca
     }
     async fn accessor_by_address(
         &self,
