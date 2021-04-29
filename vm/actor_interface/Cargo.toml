@@ -24,5 +24,5 @@ forest_json_utils = "0.1.1"
 forest_message = "0.7"
 crypto = { package = "forest_crypto", version = "0.5", features = ["json", "blst"] }
 [features]
-devnet = ["actorv0/devnet", "actorv2/devnet"]
-interopnet = ["actorv0/interopnet", "actorv2/interopnet"]
+devnet = ["actorv0/devnet", "actorv2/devnet", "actorv3/devnet"]
+interopnet = ["actorv0/interopnet", "actorv2/interopnet", "actorv3/interopnet"]
