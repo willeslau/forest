@@ -163,7 +163,7 @@ pub struct ModVerifyParams {
     pub data: Serialized,
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Debug)]
 #[serde(untagged)]
 pub enum SignedVoucher {
     V0(actorv0::paych::SignedVoucher),

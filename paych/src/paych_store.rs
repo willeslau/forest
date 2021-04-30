@@ -52,6 +52,7 @@ pub struct ChannelInfo {
     pub vouchers: Vec<VoucherInfo>,
     /// Number of the next lane that should be used when the client requests a new lane
     /// (ie makes a new voucher for a new deal)
+    #[builder(default)]
     pub next_lane: u64,
     /// Amount to be added to the channel
     /// This amount is only used by get_paych to keep track of how much

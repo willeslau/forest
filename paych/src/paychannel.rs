@@ -21,7 +21,7 @@ use blocks::Block;
 use blockstore::BlockStore;
 use cid::Cid;
 use encoding::Cbor;
-use fil_types::verifier::FullVerifier;
+use fil_types::verifier::{FullVerifier, ProofVerifier};
 use futures::{TryFutureExt, channel::oneshot::{channel as oneshot_channel, Receiver}};
 use futures::StreamExt;
 use ipld_amt::Amt;
@@ -64,7 +64,7 @@ where
     /// creates a voucher with the given specification, setting its
     /// sequence, signing the voucher and storing it in the local datastore.
     /// If there are not enough funds in the channel to create the voucher returns error
-    pub async fn create_voucher(
+    pub async fn create_voucher<V: ProofVerifier + Send + Sync + 'static>(
         &self,
         ch: Address,
         mut voucher: SignedVoucher,
@@ -91,12 +91,13 @@ where
 
         let sig = self
             .api
-            .wallet_sign::<FullVerifier>(ci.control, &vb)
+            .wallet_sign::<V>(ci.control, &vb)
             .await
             .map_err(|e| Error::Other(format!("failed to sign voucher: {}", e)))?;
         voucher.set_signature(sig);
 
         // store the voucher
+        println!("Start add voucher");
         self.add_voucher(ch, voucher.clone(), Vec::new(), BigInt::zero())
             .await?;
 
@@ -180,8 +181,8 @@ where
         // must not exceed actor balance
         let new_total = total_redeemed + pch_state.to_send();
         if act.balance < new_total {
-            return Err(Error::Other(
-                "Not enough funds in channel to cover voucher".to_owned(),
+            return Err(Error::InsuffientFunds(
+               new_total - act.balance,
             ));
         }
 
@@ -263,7 +264,7 @@ where
     ) -> Result<BigInt, Error> {
         let mut store = self.store.write().await;
         let mut ci = store.by_address(ch).await?;
-
+        println!("Store lock acquired");
         // Check if voucher has already been added
         for vi in ci.vouchers.iter_mut() {
             if sv != vi.voucher {
@@ -276,8 +277,10 @@ where
         }
 
         // Check voucher validity
+        drop(store);
         let lane_states = self.check_voucher_valid(ch, sv.clone()).await?;
-
+        let mut store = self.store.write().await;
+        println!("add_voucher: checked that voucher was good");
         // the change in value is the delta between the voucher amount and the highest
         // previous voucher amount for the lane
         let mut redeemed = BigInt::default();
@@ -299,7 +302,7 @@ where
         });
 
         if ci.next_lane as usize <= sv.lane() {
-            ci.next_lane += 1;
+            ci.next_lane = sv.lane() as u64 + 1;
         }
 
         store.put_channel_info(&mut ci).await?;
@@ -315,7 +318,7 @@ where
     }
 
     // intentionally unused, to be used with paych rpc
-    async fn _submit_voucher(
+    pub async fn submit_voucher(
         &self,
         ch: Address,
         sv: SignedVoucher,

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use encoding::Error as CborError;
+use num_bigint::BigInt;
 use thiserror::Error;
 
 // Payment Channel Errors
@@ -10,7 +11,7 @@ pub enum Error {
     #[error("Channel not tracked")]
     ChannelNotTracked,
     #[error("Not enough funds in channel")]
-    InsuffientFunds,
+    InsuffientFunds(BigInt),
     #[error("Already Tracking Channel")]
     DupChannelTracking,
     #[error("Address not found")]

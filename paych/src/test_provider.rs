@@ -47,7 +47,7 @@ pub struct TestPaychProvider<BS> {
     // }
     messages: RwLock<HashMap<Cid, SignedMessage>>,
     wallet: RwLock<HashSet<Address>>,
-    signing_key: Vec<u8>,
+    signing_key: RwLock<Vec<u8>>,
     
 }
 
@@ -75,8 +75,14 @@ impl<BS: BlockStore + Send +Sync + 'static> TestPaychProvider<BS> {
     pub async fn add_wallet_addr (&self, addr: Address) {
         self.wallet.write().await.insert(addr);
     }
-    pub async fn get_last_call() {
-        unimplemented!()
+    pub async fn add_signing_key(&self, key: Vec<u8>) {
+        *self.signing_key.write().await = key;
+    }
+    pub async fn get_last_call(&self) -> Option<UnsignedMessage>{
+        self.last_call.read().await.clone()
+    }
+    pub async fn pushed_messages(&self, c: &Cid) -> Option<SignedMessage> {
+        self.messages.read().await.get(c).cloned()
     }
 }
 
@@ -124,14 +130,14 @@ impl<BS: BlockStore + Send + Sync + 'static> PaychProvider<BS> for TestPaychProv
         k: address::Address,
         msg: &[u8],
     ) -> Result<crypto::Signature, Box<dyn std::error::Error>> {
-        Ok(sign(crypto::SignatureType::Secp256k1, &self.signing_key, msg)?)
+        Ok(sign(crypto::SignatureType::Secp256k1, &self.signing_key.read().await, msg)?)
     }
 
     async fn state_network_version(
         &self,
         _ts_key: Option<blocks::TipsetKeys>,
     ) -> Result<fil_types::NetworkVersion, Box<dyn std::error::Error>> {
-        Ok(networks::NEWEST_NETWORK_VERSION)
+        Ok(fil_types::NetworkVersion::V9)
     }
 
     fn resolve_to_key_address(

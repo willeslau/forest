@@ -36,3 +36,6 @@ vm = { package = "forest_vm", path = "../vm" }
 crypto = { package = "forest_crypto", version = "0.5" }
 
 forest_db = { package = "forest_db", version = "0.1" }
+
+[dev-dependencies]
+networks = { path = "../types/networks", features = ["mainnet"]}

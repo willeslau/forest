@@ -10,7 +10,7 @@ use async_std::task;
 use blockstore::BlockStore;
 use cid::Cid;
 use encoding::Cbor;
-use fil_types::verifier::FullVerifier;
+use fil_types::verifier::{FullVerifier, ProofVerifier};
 use futures::{TryFutureExt, stream::{FuturesUnordered, StreamExt}};
 use message::UnsignedMessage;
 use message_pool::{MessagePool, MpoolRpcProvider};
@@ -190,13 +190,13 @@ where
         store.get_channel_info(addr).await
     }
     /// Creates a voucher from the provided address and signed voucher  
-    pub async fn create_voucher(
+    pub async fn create_voucher<V: ProofVerifier + Send + Sync + 'static>(
         &self,
         addr: Address,
         voucher: SignedVoucher,
     ) -> Result<SignedVoucher, Error> {
         let ca = self.accessor_by_address(addr).await?;
-        ca.create_voucher(addr, voucher).await
+        ca.create_voucher::<V>(addr, voucher).await
     }
     /// Check if the given voucher is valid (is or could become spendable at some point).
     /// If the channel is not in the store, fetches the channel from state (and checks that
@@ -221,11 +221,18 @@ where
         secret: Vec<u8>,
         proof: Vec<u8>,
     ) -> Result<bool, Error> {
-        if proof.is_empty() {
-            return Err(Error::Other("proof is empty".to_string()));
+        if !proof.is_empty() {
+            return Err(Error::Other("payment channel proof parameter is not supported".to_string()));
         }
         let ca = self.accessor_by_address(addr).await?;
         ca.check_voucher_spendable(addr, sv, secret, proof).await
+    }
+    pub async fn submit_voucher (&self, ch: Address, sv: SignedVoucher, secret: &[u8], proof: &[u8]) -> Result<Cid, Error> {
+        if !proof.is_empty() {
+            return Err(Error::Other("payment channel proof parameter is not supported".to_string()));
+        }
+        let ca = self.accessor_by_address(ch).await?;
+        ca.submit_voucher(ch, sv, secret).await
     }
     /// Adds a voucher for an outbound channel.
     /// Returns an error if the channel is not already in the store.
