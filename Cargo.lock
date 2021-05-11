@@ -3279,6 +3279,7 @@ dependencies = [
  "networks",
  "num-traits",
  "rayon",
+ "state_migration",
  "state_tree",
 ]
 
