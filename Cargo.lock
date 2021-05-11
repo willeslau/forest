@@ -3281,6 +3281,7 @@ dependencies = [
  "num-traits",
  "num_cpus",
  "rayon",
+ "state_migration",
  "state_tree",
 ]
 
