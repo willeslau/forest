@@ -28,12 +28,12 @@ use crate::MigrationJobOutput;
 use async_std::sync::Mutex;
 use async_std::sync::Arc;
 
-type Migrator<'db, BS> = Arc<dyn ActorMigration<'db, BS>>;
+type Migrator<'db, BS> = Arc<dyn ActorMigration<BS>>;
 
 const ACTORS_COUNT: usize = 11;
 
-pub fn migrate_state_tree<'db, BS: BlockStore + Sync>(
-    store: Arc<&'db BS>,
+pub fn migrate_state_tree<'db, BS: BlockStore + Send + Sync>(
+    store: Arc<BS>,
     actors_root_in: Cid,
     prior_epoch: ChainEpoch,
 ) -> MigrationResult<Cid> {
@@ -98,10 +98,11 @@ pub fn migrate_state_tree<'db, BS: BlockStore + Sync>(
         return Err(MigrationError::IncompleteMigrationSpec(migrations.len()));
     }
 
-    let actors_in = StateTree::new_from_root(store, &actors_root_in).unwrap();
-    let mut actors_out = StateTree::new(store, StateTreeVersion::V3)
+    let actors_in = StateTree::new_from_root(store.as_ref(), &actors_root_in).unwrap();
+    let mut actors_out = StateTree::new(store.as_ref(), StateTreeVersion::V3)
         .map_err(|e| MigrationError::StateTreeCreation(e.to_string()))?;
 
+    let a_s = store.clone();
     actors_in
         .for_each(|addr, state| {
             if deferred_code_ids.contains(&state.code) {
@@ -118,22 +119,22 @@ pub fn migrate_state_tree<'db, BS: BlockStore + Sync>(
             };
 
             // TODO pass job_tx
-            jobs.push(async move { next_input.run(store, prior_epoch) });
+            let asc = a_s.clone();
+            jobs.push(async move { next_input.run(asc.clone(), prior_epoch) });
 
             Ok(())
         })
         .map_err(|e| MigrationError::MigrationJobCreate(e.to_string()))?;
 
-    // task::spawn(async {
+    // let x: Result<(), MigrationError> = task::block_on(task::spawn_blocking( async {
     //     while let Some(job_result) = jobs.next().await {
-    //         let result = job_result?;
+    //         let result = job_result.unwrap();
     //         actors_out
     //             .set_actor(&result.address, result.actor_state)
-    //             .map_err(|e| MigrationError::SetActorState(e.to_string()))?;
+    //             .map_err(|e| MigrationError::SetActorState(e.to_string())).unwrap();
     //     }
-
     //     Ok(())
-    // });
+    // }));
 
     let root_cid = actors_out
         .flush()

@@ -16,14 +16,14 @@ use async_std::sync::Arc;
 
 pub(crate) struct MinerMigrator(Cid);
 
-pub(crate) fn miner_migrator_v4<'db, BS: BlockStore>(cid: Cid) -> Arc<dyn ActorMigration<'db, BS>> {
+pub(crate) fn miner_migrator_v4<'db, BS: BlockStore + Send + Sync>(cid: Cid) -> Arc<dyn ActorMigration< BS>> {
     Arc::new(MinerMigrator(cid))
 }
 
-impl<'db, BS: BlockStore> ActorMigration<'db, BS> for MinerMigrator {
+impl<'db, BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
     fn migrate_state(
         &self,
-        store: &'db BS,
+        store: Arc<BS>,
         input: ActorMigrationInput,
     ) -> MigrationResult<MigrationOutput> {
         let v3_state: Option<V3State> = store
