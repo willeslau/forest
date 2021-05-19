@@ -11,6 +11,7 @@ use ipld_blockstore::BlockStore;
 use std::error::Error as StdError;
 use std::rc::Rc;
 use vm::{ActorState, TokenAmount};
+use async_std::sync::Arc;
 
 pub mod nv12;
 
@@ -68,7 +69,7 @@ pub(crate) trait ActorMigration<'db, BS: BlockStore> {
 struct MigrationJob<'db, BS: BlockStore> {
     address: Address,
     actor_state: ActorState,
-    actor_migration: Rc<dyn ActorMigration<'db, BS>>,
+    actor_migration: Arc<dyn ActorMigration<'db, BS>>,
 }
 
 impl<'db, BS: BlockStore> MigrationJob<'db, BS> {
@@ -113,8 +114,8 @@ struct MigrationJobOutput {
     actor_state: ActorState,
 }
 
-fn nil_migrator_v4<'db, BS: BlockStore>(cid: Cid) -> Rc<dyn ActorMigration<'db, BS>> {
-    Rc::new(NilMigrator(cid))
+fn nil_migrator_v4<'db, BS: BlockStore>(cid: Cid) -> Arc<dyn ActorMigration<'db, BS>> {
+    Arc::new(NilMigrator(cid))
 }
 
 // Migrator which preserves the head CID and provides a fixed result code CID.
