@@ -17,7 +17,7 @@ use std::{cell::RefCell, convert::TryFrom, io::Cursor};
 #[derive(Debug)]
 pub struct BufferedBlockStore<'bs, BS> {
     base: &'bs BS,
-    write: RefCell<HashMap<Cid, Vec<u8>>>,
+    write: std::sync::Mutex<HashMap<Cid, Vec<u8>>>,
 }
 
 impl<'bs, BS> BufferedBlockStore<'bs, BS>
@@ -33,12 +33,13 @@ where
     /// Flushes the buffered cache based on the root node.
     /// This will recursively traverse the cache and write all data connected by links to this
     /// root Cid.
-    pub fn flush(&mut self, root: &Cid) -> Result<(), Box<dyn StdError>> {
+    pub fn flush(&mut self, root: &Cid) -> Result<(), Box<dyn StdError + '_>> {
         let mut buffer = Vec::new();
-        copy_rec(self.base, &self.write.borrow(), *root, &mut buffer)?;
+        let x = &*self.write.lock()?;
+        copy_rec(self.base, x, *root, &mut buffer)?;
 
         self.base.bulk_write(&buffer)?;
-        self.write = Default::default();
+        // self.write = Default::default();
 
         Ok(())
     }
@@ -190,7 +191,8 @@ where
     BS: BlockStore,
 {
     fn get_bytes(&self, cid: &Cid) -> Result<Option<Vec<u8>>, Box<dyn StdError>> {
-        if let Some(data) = self.write.borrow().get(cid) {
+        let x = &*self.write.lock().unwrap();
+        if let Some(data) = x.get(cid) {
             return Ok(Some(data.clone()));
         }
 
@@ -199,7 +201,9 @@ where
 
     fn put_raw(&self, bytes: Vec<u8>, code: Code) -> Result<Cid, Box<dyn StdError>> {
         let cid = cid::new_from_cbor(&bytes, code);
-        self.write.borrow_mut().insert(cid, bytes);
+        let mut b = self.write.lock();
+        let x = b.as_deref_mut().unwrap();
+        x.insert(cid, bytes);
         Ok(cid)
     }
 }

@@ -11,13 +11,13 @@ pub fn resolve_cids_recursive<BS>(
     bs: &BS,
     cid: &Cid,
     depth: Option<u64>,
-) -> Result<Ipld, Box<dyn StdError>>
+) -> Result<Ipld, String>
 where
     BS: BlockStore,
 {
-    let mut ipld = bs.get(cid)?.ok_or("Cid does not exist in blockstore")?;
+    let mut ipld = bs.get(cid).map_err(|e| e.to_string())?.ok_or("Cid does not exist in blockstore")?;
 
-    resolve_ipld(bs, &mut ipld, depth)?;
+    resolve_ipld(bs, &mut ipld, depth).map_err(|e| e.to_string())?;
 
     Ok(ipld)
 }
@@ -50,7 +50,7 @@ where
         }
         Ipld::Link(cid) => {
             if cid.codec() == DAG_CBOR {
-                if let Some(x) = bs.get(cid)? {
+                if let Some(x) = bs.get(cid).map_err(|e| e.to_string())? {
                     *ipld = x;
                 }
             }

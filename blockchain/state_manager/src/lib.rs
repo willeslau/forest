@@ -229,17 +229,22 @@ where
         V: ProofVerifier,
         CB: FnMut(&Cid, &ChainMessage, &ApplyRet) -> Result<(), String>,
     {
-        let mut buf_store = BufferedBlockStore::new(self.blockstore());
+        let d = self.blockstore_cloned();
+        let d_ref = d.as_ref();
+        let mut buf_store = std::sync::Arc::new(BufferedBlockStore::new(d_ref));
+        let x = buf_store.as_ref();
         let lb_wrapper = SMLookbackWrapper {
             sm: self,
-            store: &buf_store,
+            store: x,
             tipset,
             verifier: PhantomData::<V>::default(),
         };
 
+        let store_ref = buf_store.as_ref();
+
         let mut vm = VM::<_, _, _, _, _, V>::new(
             p_state,
-            &buf_store,
+            store_ref,
             epoch,
             rand,
             base_fee,
@@ -256,7 +261,8 @@ where
         // Flush changes to blockstore
         let state_root = vm.flush()?;
         // Persist changes connected to root
-        buf_store.flush(&state_root)?;
+        let a = std::sync::Arc::get_mut(&mut buf_store).unwrap().flush(&state_root);
+        // let v = a.flush(&state_root)?;
 
         Ok((state_root, rect_root))
     }
@@ -1279,11 +1285,11 @@ struct SMLookbackWrapper<'sm, 'ts, DB, BS, V> {
     verifier: PhantomData<V>,
 }
 
-impl<'sm, 'ts, DB, BS, V> LookbackStateGetter<'sm, BS> for SMLookbackWrapper<'sm, 'ts, DB, BS, V>
+impl<'sm, 'ts, DB, BS:, V> LookbackStateGetter<'sm, BS> for SMLookbackWrapper<'sm, 'ts, DB, BS, V>
 where
     // Yes, both are needed, because the VM should only use the buffered store
     DB: BlockStore + Send + Sync + 'static,
-    BS: BlockStore,
+    BS: BlockStore + Send + Sync,
     V: ProofVerifier,
 {
     fn state_lookback(&self, round: ChainEpoch) -> Result<StateTree<'sm, BS>, Box<dyn StdError>> {
