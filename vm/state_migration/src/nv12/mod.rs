@@ -17,31 +17,32 @@ use cid::Cid;
 use clock::ChainEpoch;
 use fil_types::StateTreeVersion;
 use futures::stream::FuturesOrdered;
-use futures::StreamExt;
 use ipld_blockstore::BlockStore;
 use miner::miner_migrator_v4;
 use state_tree::StateTree;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 use crate::MigrationJobOutput;
-
-use async_std::sync::Mutex;
 use async_std::sync::Arc;
+use crossbeam_utils::thread;
 
-type Migrator<BS> = Arc<dyn ActorMigration<BS>>;
+type Migrator<BS> = Arc<dyn ActorMigration<BS> + Send + Sync>;
 
 const ACTORS_COUNT: usize = 11;
 
-pub fn migrate_state_tree<BS: BlockStore + Sync + Send>(
+// Try to pass an Arc<BS> here.
+pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
     store: Arc<BS>,
     actors_root_in: Cid,
     prior_epoch: ChainEpoch,
 ) -> MigrationResult<Cid> {
-    let mut jobs = FuturesOrdered::new();
+    // let mut jobs = FuturesOrdered::new();
     // TODO
     // pass job_tx to each job instance's run method.
     // iterate and collect on job_rx with block_on
-    let (job_tx, job_rx) = async_std::channel::unbounded::<MigrationJobOutput>();
+
+
+
+    let (job_tx, job_rx) = crossbeam_channel::unbounded();
 
     // Maps prior version code CIDs to migration functions.
     let mut migrations: HashMap<Cid, Migrator<BS>> =
@@ -98,32 +99,53 @@ pub fn migrate_state_tree<BS: BlockStore + Sync + Send>(
         return Err(MigrationError::IncompleteMigrationSpec(migrations.len()));
     }
 
+    // input actors state tree - 
     let actors_in = StateTree::new_from_root(&*store, &actors_root_in).unwrap();
     let mut actors_out = StateTree::new(&*store, StateTreeVersion::V3)
         .map_err(|e| MigrationError::StateTreeCreation(e.to_string()))?;
 
-    actors_in
+    let a = actors_in
         .for_each(|addr, state| {
             if deferred_code_ids.contains(&state.code) {
                 return Ok(());
             }
-
-            let next_input = MigrationJob {
-                address: addr,
-                actor_state: state.clone(),
-                actor_migration: migrations
-                    .get(&state.code)
-                    .cloned()
-                    .ok_or(MigrationError::MigratorNotFound(state.code))?,
-            };
-
+            
             // TODO pass job_tx
             let store_clone = store.clone();
-            jobs.push(async move { next_input.run(store_clone, prior_epoch) });
+            // let code = state.code.clone();
+            let actor_state = state.clone();
+            // let migrations_copy = migrations.clone();
+            // 
+            let a = thread::scope(|s| {
+                    let a = s.spawn(|_|{
+                        let next_input = MigrationJob {
+                        address: addr.clone(),
+                        actor_state,
+                        actor_migration: migrations
+                            .get(&state.code)
+                            .cloned()
+                            .ok_or(MigrationError::MigratorNotFound(state.code)).unwrap(),
+                        };
+                        
+                        let a = next_input.run(store_clone, prior_epoch).unwrap();
+                        job_tx.send(a).expect("failed sending job output");
+                        // dbg!("sent");
+                    });
+            });
 
             Ok(())
-        })
-        .map_err(|e| MigrationError::MigrationJobCreate(e.to_string()))?;
+            }).expect("failed executing for each");
+
+            // jobs.push(async move { next_input.run(store_clone, prior_epoch) });
+
+        //     Ok(())
+        // })
+        // .map_err(|e| MigrationError::MigrationJobCreate(e.to_string()))?;
+
+    for i in job_rx {
+        // dbg!("setting job output");
+        actors_out.set_actor(&i.address, i.actor_state).map_err(|e| MigrationError::SetActorState(e.to_string()))?;
+    }
 
     // task::spawn(async {
     //     while let Some(job_result) = jobs.next().await {

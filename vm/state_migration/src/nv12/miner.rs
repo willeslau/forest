@@ -16,13 +16,12 @@ use async_std::sync::Arc;
 
 pub(crate) struct MinerMigrator(Cid);
 
-pub(crate) fn miner_migrator_v4<'db, BS: BlockStore>(cid: Cid) -> Arc<dyn ActorMigration<BS>> {
+pub(crate) fn miner_migrator_v4<'db, BS: BlockStore + Send + Sync>(cid: Cid) -> Arc<dyn ActorMigration<BS> + Send + Sync> {
     Arc::new(MinerMigrator(cid))
 }
 
-// each actor's state migration is read from blockstore, change state tree, and write back to the blocstore. 
-
-impl<'db, BS: BlockStore> ActorMigration<BS> for MinerMigrator {
+// each actor's state migration is read from blockstore, changes state tree, and writes back to the blocstore. 
+impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
     fn migrate_state(
         &self,
         store: Arc<BS>,

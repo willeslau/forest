@@ -35,11 +35,14 @@ where
     /// root Cid.
     pub fn flush(&mut self, root: &Cid) -> Result<(), Box<dyn StdError + '_>> {
         let mut buffer = Vec::new();
-        let x = &*self.write.lock()?;
-        copy_rec(self.base, x, *root, &mut buffer)?;
+        {
+            // FIXME: we unwrap because of a lifetime issue.
+            let s = &mut *self.write.lock().unwrap();
+            copy_rec(self.base, s, *root, &mut buffer)?;
+        }
 
         self.base.bulk_write(&buffer)?;
-        // self.write = Default::default();
+        self.write = Default::default();
 
         Ok(())
     }

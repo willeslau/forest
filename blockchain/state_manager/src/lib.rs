@@ -229,22 +229,19 @@ where
         V: ProofVerifier,
         CB: FnMut(&Cid, &ChainMessage, &ApplyRet) -> Result<(), String>,
     {
-        let d = self.blockstore_cloned();
-        let d_ref = d.as_ref();
-        let mut buf_store = std::sync::Arc::new(BufferedBlockStore::new(d_ref));
-        let x = buf_store.as_ref();
+        let db = self.blockstore_cloned();
+        let mut buf_store = Arc::new(BufferedBlockStore::new(db.as_ref()));
+        let store = buf_store.as_ref();
         let lb_wrapper = SMLookbackWrapper {
             sm: self,
-            store: x,
+            store,
             tipset,
             verifier: PhantomData::<V>::default(),
         };
 
-        let store_ref = buf_store.as_ref();
-
         let mut vm = VM::<_, _, _, _, _, V>::new(
             p_state,
-            store_ref,
+            store,
             epoch,
             rand,
             base_fee,
@@ -254,14 +251,14 @@ where
         )?;
 
         // Apply tipset messages
-        let receipts = vm.apply_block_messages(messages, parent_epoch, epoch, callback)?;
+        let receipts = vm.apply_block_messages(messages, parent_epoch, epoch, buf_store.clone(), callback)?;
 
         // Construct receipt root from receipts
         let rect_root = Amt::new_from_iter(self.blockstore(), receipts)?;
         // Flush changes to blockstore
         let state_root = vm.flush()?;
         // Persist changes connected to root
-        let a = std::sync::Arc::get_mut(&mut buf_store).unwrap().flush(&state_root);
+        let a = Arc::get_mut(&mut buf_store).unwrap().flush(&state_root).unwrap();
         // let v = a.flush(&state_root)?;
 
         Ok((state_root, rect_root))
