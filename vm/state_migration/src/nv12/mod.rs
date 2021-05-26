@@ -35,13 +35,11 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
     actors_root_in: Cid,
     prior_epoch: ChainEpoch,
 ) -> MigrationResult<Cid> {
+    dbg!("migration began");
     // let mut jobs = FuturesOrdered::new();
     // TODO
     // pass job_tx to each job instance's run method.
     // iterate and collect on job_rx with block_on
-
-
-
     let (job_tx, job_rx) = crossbeam_channel::unbounded();
 
     // Maps prior version code CIDs to migration functions.
@@ -104,21 +102,20 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
     let mut actors_out = StateTree::new(&*store, StateTreeVersion::V3)
         .map_err(|e| MigrationError::StateTreeCreation(e.to_string()))?;
 
+    let mut i = 0;
     let a = actors_in
         .for_each(|addr, state| {
             if deferred_code_ids.contains(&state.code) {
                 return Ok(());
             }
+
             
-            // TODO pass job_tx
             let store_clone = store.clone();
-            // let code = state.code.clone();
             let actor_state = state.clone();
-            // let migrations_copy = migrations.clone();
-            // 
+            
             let a = thread::scope(|s| {
-                    let a = s.spawn(|_|{
-                        let next_input = MigrationJob {
+                let a = s.spawn(|_|{
+                    let next_input = MigrationJob {
                         address: addr.clone(),
                         actor_state,
                         actor_migration: migrations
@@ -129,6 +126,7 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
                         
                         let a = next_input.run(store_clone, prior_epoch).unwrap();
                         job_tx.send(a).expect("failed sending job output");
+                        i += 1;
                         // dbg!("sent");
                     });
             });
@@ -136,16 +134,16 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
             Ok(())
             }).expect("failed executing for each");
 
-            // jobs.push(async move { next_input.run(store_clone, prior_epoch) });
+    log::info!("number of for_each calls: {}", i);
 
-        //     Ok(())
-        // })
-        // .map_err(|e| MigrationError::MigrationJobCreate(e.to_string()))?;
-
+    let mut b = 0;
     for i in job_rx {
         // dbg!("setting job output");
         actors_out.set_actor(&i.address, i.actor_state).map_err(|e| MigrationError::SetActorState(e.to_string()))?;
+        b += 1;
     }
+
+    log::info!("number of received: {}", b);
 
     // task::spawn(async {
     //     while let Some(job_result) = jobs.next().await {
@@ -158,9 +156,11 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
     //     Ok(())
     // });
 
+    log::info!("before flush");
     let root_cid = actors_out
         .flush()
         .map_err(|e| MigrationError::FlushFailed(e.to_string()));
+    log::info!("after flush");
 
     root_cid
 }

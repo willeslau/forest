@@ -6273,6 +6273,7 @@ dependencies = [
  "futures",
  "ipld_blockstore",
  "libp2p 0.35.1",
+ "log",
  "serde",
  "state_tree",
  "thiserror",
