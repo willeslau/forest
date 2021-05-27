@@ -7,20 +7,22 @@ use crate::{ActorMigration, ActorMigrationInput};
 use crate::{MigrationError, MigrationOutput, MigrationResult};
 use actor_interface::actorv3::miner::State as V3State;
 use actor_interface::actorv4::miner::State as V4State;
+use async_std::sync::Arc;
 use cid::Cid;
 use cid::Code::Blake2b256;
 use ipld_blockstore::BlockStore;
 use std::io::{Error, ErrorKind};
 use std::rc::Rc;
-use async_std::sync::Arc;
 
 pub(crate) struct MinerMigrator(Cid);
 
-pub(crate) fn miner_migrator_v4<'db, BS: BlockStore + Send + Sync>(cid: Cid) -> Arc<dyn ActorMigration<BS> + Send + Sync> {
+pub(crate) fn miner_migrator_v4<'db, BS: BlockStore + Send + Sync>(
+    cid: Cid,
+) -> Arc<dyn ActorMigration<BS> + Send + Sync> {
     Arc::new(MinerMigrator(cid))
 }
 
-// each actor's state migration is read from blockstore, changes state tree, and writes back to the blocstore. 
+// each actor's state migration is read from blockstore, changes state tree, and writes back to the blocstore.
 impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
     fn migrate_state(
         &self,

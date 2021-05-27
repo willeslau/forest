@@ -251,14 +251,18 @@ where
         )?;
 
         // Apply tipset messages
-        let receipts = vm.apply_block_messages(messages, parent_epoch, epoch, buf_store.clone(), callback)?;
+        let receipts =
+            vm.apply_block_messages(messages, parent_epoch, epoch, buf_store.clone(), callback)?;
 
         // Construct receipt root from receipts
         let rect_root = Amt::new_from_iter(self.blockstore(), receipts)?;
         // Flush changes to blockstore
         let state_root = vm.flush()?;
         // Persist changes connected to root
-        let a = Arc::get_mut(&mut buf_store).unwrap().flush(&state_root).unwrap();
+        let a = Arc::get_mut(&mut buf_store)
+            .unwrap()
+            .flush(&state_root)
+            .unwrap();
         // let v = a.flush(&state_root)?;
 
         Ok((state_root, rect_root))
@@ -1282,7 +1286,7 @@ struct SMLookbackWrapper<'sm, 'ts, DB, BS, V> {
     verifier: PhantomData<V>,
 }
 
-impl<'sm, 'ts, DB, BS:, V> LookbackStateGetter<'sm, BS> for SMLookbackWrapper<'sm, 'ts, DB, BS, V>
+impl<'sm, 'ts, DB, BS, V> LookbackStateGetter<'sm, BS> for SMLookbackWrapper<'sm, 'ts, DB, BS, V>
 where
     // Yes, both are needed, because the VM should only use the buffered store
     DB: BlockStore + Send + Sync + 'static,

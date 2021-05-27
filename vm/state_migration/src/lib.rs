@@ -5,11 +5,11 @@
 //! Each network upgrade / state migration code lives in their own module.
 
 use address::Address;
+use async_std::sync::Arc;
 use cid::Cid;
 use clock::ChainEpoch;
 use ipld_blockstore::BlockStore;
 use vm::{ActorState, TokenAmount};
-use async_std::sync::Arc;
 
 pub mod nv12;
 
@@ -112,7 +112,9 @@ struct MigrationJobOutput {
     actor_state: ActorState,
 }
 
-fn nil_migrator_v4<BS: BlockStore + Send + Sync>(cid: Cid) -> Arc<dyn ActorMigration<BS> + Send + Sync> {
+fn nil_migrator_v4<BS: BlockStore + Send + Sync>(
+    cid: Cid,
+) -> Arc<dyn ActorMigration<BS> + Send + Sync> {
     Arc::new(NilMigrator(cid))
 }
 // Migrator which preserves the head CID and provides a fixed result code CID.

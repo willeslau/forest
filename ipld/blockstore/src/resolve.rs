@@ -7,15 +7,14 @@ use forest_ipld::Ipld;
 use std::error::Error as StdError;
 
 /// Resolves link to recursively resolved [Ipld] with no hash links.
-pub fn resolve_cids_recursive<BS>(
-    bs: &BS,
-    cid: &Cid,
-    depth: Option<u64>,
-) -> Result<Ipld, String>
+pub fn resolve_cids_recursive<BS>(bs: &BS, cid: &Cid, depth: Option<u64>) -> Result<Ipld, String>
 where
     BS: BlockStore,
 {
-    let mut ipld = bs.get(cid).map_err(|e| e.to_string())?.ok_or("Cid does not exist in blockstore")?;
+    let mut ipld = bs
+        .get(cid)
+        .map_err(|e| e.to_string())?
+        .ok_or("Cid does not exist in blockstore")?;
 
     resolve_ipld(bs, &mut ipld, depth).map_err(|e| e.to_string())?;
 

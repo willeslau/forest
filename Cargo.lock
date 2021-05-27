@@ -6274,6 +6274,7 @@ dependencies = [
  "ipld_blockstore",
  "libp2p 0.35.1",
  "log",
+ "rayon",
  "serde",
  "state_tree",
  "thiserror",

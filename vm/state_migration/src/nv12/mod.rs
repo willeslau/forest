@@ -10,20 +10,20 @@
 pub mod miner;
 
 use crate::nil_migrator_v4;
+use crate::MigrationJobOutput;
 use crate::{ActorMigration, MigrationError, MigrationJob, MigrationResult};
 use actor_interface::{actorv3, actorv4};
+use async_std::sync::Arc;
 use async_std::task;
 use cid::Cid;
 use clock::ChainEpoch;
+use crossbeam_utils::thread;
 use fil_types::StateTreeVersion;
 use futures::stream::FuturesOrdered;
 use ipld_blockstore::BlockStore;
 use miner::miner_migrator_v4;
 use state_tree::StateTree;
 use std::collections::{HashMap, HashSet};
-use crate::MigrationJobOutput;
-use async_std::sync::Arc;
-use crossbeam_utils::thread;
 
 type Migrator<BS> = Arc<dyn ActorMigration<BS> + Send + Sync>;
 
@@ -40,11 +40,9 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
     // TODO
     // pass job_tx to each job instance's run method.
     // iterate and collect on job_rx with block_on
-    let (job_tx, job_rx) = crossbeam_channel::unbounded();
 
     // Maps prior version code CIDs to migration functions.
-    let mut migrations: HashMap<Cid, Migrator<BS>> =
-        HashMap::with_capacity(ACTORS_COUNT);
+    let mut migrations: HashMap<Cid, Migrator<BS>> = HashMap::with_capacity(ACTORS_COUNT);
     migrations.insert(
         *actorv3::ACCOUNT_ACTOR_CODE_ID,
         nil_migrator_v4(*actorv4::ACCOUNT_ACTOR_CODE_ID),
@@ -97,57 +95,61 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
         return Err(MigrationError::IncompleteMigrationSpec(migrations.len()));
     }
 
-    // input actors state tree - 
+    // input actors state tree -
     let actors_in = StateTree::new_from_root(&*store, &actors_root_in).unwrap();
     let mut actors_out = StateTree::new(&*store, StateTreeVersion::V3)
         .map_err(|e| MigrationError::StateTreeCreation(e.to_string()))?;
 
     let mut i = 0;
-    let x = thread::scope(|s| {
-    let a = actors_in
-        .for_each(|addr, state| {
-            if deferred_code_ids.contains(&state.code) {
-                return Ok(());
-            }
 
-            
-            let store_clone = store.clone();
-            let actor_state = state.clone();
-            let code = state.code;
+    let tp = rayon::ThreadPoolBuilder::new()
+        .num_threads(5)
+        .build()
+        .unwrap();
+    tp.scope(|s| {
+        let (tx_in, rx_in) = crossbeam_channel::bounded(5);
+        let (tx_out, rx_out) = crossbeam_channel::bounded(5);
+        let store_clone = store.clone();
+        s.spawn(move |s1| {
+            actors_in.for_each(|addr, state| {
+                tx_in.send((addr, state.clone())).unwrap();
+                Ok(())
+            }).unwrap();
+        });
+        s.spawn(move |s2| {
+            let (addr, state) = rx_in.recv().unwrap();
+            let migrator = migrations.get(&state.code).cloned().unwrap();
+            s2.spawn(move |_s22| {
+                let next_input = MigrationJob {
+                    address: addr.clone(),
+                    actor_state: state,
+                    actor_migration: migrator,
+                };
 
-            let migrator = migrations
-            .get(&code)
-            .cloned()
-            .ok_or(MigrationError::MigratorNotFound(code)).unwrap();
-            
-            // let a = thread::scope(|s| {
-            let tx = job_tx.clone();
-                let a = s.spawn(move |_|{
-                    let next_input = MigrationJob {
-                        address: addr.clone(),
-                        actor_state,
-                        actor_migration: migrator,
-                        };
-                        
-                        let a = next_input.run(store_clone, prior_epoch).unwrap();
-                        
-                        tx.send(a).expect("failed sending job output");
-                        i += 1;
-                        // dbg!("sent");
-                    });
+                let a = next_input.run(store_clone, prior_epoch).unwrap();
 
-            Ok(())
-            }).expect("failed executing for each");
+                tx_out.send(a).expect("failed sending job output");
+                i += 1;
+                // dbg!("sent");
+            });
+        });
+        while let Ok(job_output) = rx_out.recv() {
+            actors_out
+                .set_actor(&job_output.address, job_output.actor_state)
+                .unwrap();
+        }
     });
 
-    log::info!("number of for_each calls: {}", i);
+    // log::info!("number of for_each calls: {}", i);
 
-    let mut b = 0;
+    // let mut b = 0;
 
-    for i in job_rx.try_iter() {
-        actors_out.set_actor(&i.address, i.actor_state).map_err(|e| MigrationError::SetActorState(e.to_string()))?;
-        b += 1;
-    }
+    // for i in job_rx.try_iter() {
+    //     actors_out
+    //         .set_actor(&i.address, i.actor_state)
+    //         .map_err(|e| MigrationError::SetActorState(e.to_string()))?;
+    //     b += 1;
+    // }
 
     // for i in a {
     //     b += 1;
@@ -160,7 +162,7 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
     //     dbg!(b);
     // }
 
-    log::info!("number of received: {}", b);
+    // log::info!("number of received: {}", b);
 
     // task::spawn(async {
     //     while let Some(job_result) = jobs.next().await {

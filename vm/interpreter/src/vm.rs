@@ -173,7 +173,11 @@ where
     /// Flushes the StateTree and perform a state migration if there is a migration at this epoch.
     /// If there is no migration this function will return Ok(None).
     #[allow(unreachable_code, unused_variables)]
-    pub fn migrate_state(&mut self, epoch: ChainEpoch, arc_store: std::sync::Arc<impl BlockStore + Send + Sync>) -> Result<Option<Cid>, Box<dyn StdError>> {
+    pub fn migrate_state(
+        &mut self,
+        epoch: ChainEpoch,
+        arc_store: std::sync::Arc<impl BlockStore + Send + Sync>,
+    ) -> Result<Option<Cid>, Box<dyn StdError>> {
         match epoch {
             x if x == UPGRADE_ACTORS_V4_HEIGHT => {
                 let start = std::time::Instant::now();
