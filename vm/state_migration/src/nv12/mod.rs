@@ -117,21 +117,25 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
             }).unwrap();
         });
         s.spawn(move |s2| {
-            let (addr, state) = rx_in.recv().unwrap();
-            let migrator = migrations.get(&state.code).cloned().unwrap();
-            s2.spawn(move |_s22| {
-                let next_input = MigrationJob {
-                    address: addr.clone(),
-                    actor_state: state,
-                    actor_migration: migrator,
-                };
-
-                let a = next_input.run(store_clone, prior_epoch).unwrap();
-
-                tx_out.send(a).expect("failed sending job output");
-                i += 1;
-                // dbg!("sent");
-            });
+            while let Ok((addr, state)) = rx_in.recv() {
+                let tx_out = tx_out.clone();
+                let store_clone = store_clone.clone();
+                let migrator = migrations.get(&state.code).cloned().unwrap();
+                s2.spawn(move |_s22| {
+                    let next_input = MigrationJob {
+                        address: addr.clone(),
+                        actor_state: state,
+                        actor_migration: migrator,
+                    };
+    
+                    let a = next_input.run(store_clone, prior_epoch).unwrap();
+    
+                    tx_out.send(a).expect("failed sending job output");
+                    i += 1;
+                    // dbg!("sent");
+                });
+            }
+            drop(tx_out);
         });
         while let Ok(job_output) = rx_out.recv() {
             actors_out
@@ -139,41 +143,6 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
                 .unwrap();
         }
     });
-
-    // log::info!("number of for_each calls: {}", i);
-
-    // let mut b = 0;
-
-    // for i in job_rx.try_iter() {
-    //     actors_out
-    //         .set_actor(&i.address, i.actor_state)
-    //         .map_err(|e| MigrationError::SetActorState(e.to_string()))?;
-    //     b += 1;
-    // }
-
-    // for i in a {
-    //     b += 1;
-    //     actors_out.set_actor(&i.address, i.actor_state).map_err(|e| MigrationError::SetActorState(e.to_string()))?;
-    // }
-    // for i in job_rx.try_iter() {
-    //     // dbg!("setting job output");
-    //     actors_out.set_actor(&i.address, i.actor_state).map_err(|e| MigrationError::SetActorState(e.to_string()))?;
-    //     b += 1;
-    //     dbg!(b);
-    // }
-
-    // log::info!("number of received: {}", b);
-
-    // task::spawn(async {
-    //     while let Some(job_result) = jobs.next().await {
-    //         let result = job_result?;
-    //         actors_out
-    //             .set_actor(&result.address, result.actor_state)
-    //             .map_err(|e| MigrationError::SetActorState(e.to_string()))?;
-    //     }
-
-    //     Ok(())
-    // });
 
     log::info!("before flush");
     let root_cid = actors_out
