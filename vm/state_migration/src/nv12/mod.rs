@@ -103,6 +103,7 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
         .map_err(|e| MigrationError::StateTreeCreation(e.to_string()))?;
 
     let mut i = 0;
+    let x = thread::scope(|s| {
     let a = actors_in
         .for_each(|addr, state| {
             if deferred_code_ids.contains(&state.code) {
@@ -112,36 +113,52 @@ pub fn migrate_state_tree<BS: BlockStore + Send + Sync>(
             
             let store_clone = store.clone();
             let actor_state = state.clone();
+            let code = state.code;
+
+            let migrator = migrations
+            .get(&code)
+            .cloned()
+            .ok_or(MigrationError::MigratorNotFound(code)).unwrap();
             
-            let a = thread::scope(|s| {
-                let a = s.spawn(|_|{
+            // let a = thread::scope(|s| {
+            let tx = job_tx.clone();
+                let a = s.spawn(move |_|{
                     let next_input = MigrationJob {
                         address: addr.clone(),
                         actor_state,
-                        actor_migration: migrations
-                            .get(&state.code)
-                            .cloned()
-                            .ok_or(MigrationError::MigratorNotFound(state.code)).unwrap(),
+                        actor_migration: migrator,
                         };
                         
                         let a = next_input.run(store_clone, prior_epoch).unwrap();
-                        job_tx.send(a).expect("failed sending job output");
+                        
+                        tx.send(a).expect("failed sending job output");
                         i += 1;
                         // dbg!("sent");
                     });
-            });
 
             Ok(())
             }).expect("failed executing for each");
+    });
 
     log::info!("number of for_each calls: {}", i);
 
     let mut b = 0;
-    for i in job_rx {
-        // dbg!("setting job output");
+
+    for i in job_rx.try_iter() {
         actors_out.set_actor(&i.address, i.actor_state).map_err(|e| MigrationError::SetActorState(e.to_string()))?;
         b += 1;
     }
+
+    // for i in a {
+    //     b += 1;
+    //     actors_out.set_actor(&i.address, i.actor_state).map_err(|e| MigrationError::SetActorState(e.to_string()))?;
+    // }
+    // for i in job_rx.try_iter() {
+    //     // dbg!("setting job output");
+    //     actors_out.set_actor(&i.address, i.actor_state).map_err(|e| MigrationError::SetActorState(e.to_string()))?;
+    //     b += 1;
+    //     dbg!(b);
+    // }
 
     log::info!("number of received: {}", b);
 

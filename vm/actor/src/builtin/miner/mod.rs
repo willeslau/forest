@@ -3196,10 +3196,10 @@ where
             },
         )?;
     } else {
-        info!(
-            "miner {} going inactive, deadline cron discontinued",
-            rt.message().receiver()
-        )
+        // info!(
+        //     "miner {} going inactive, deadline cron discontinued",
+        //     rt.message().receiver()
+        // )
     }
 
     // Record whether or not we _have_ early terminations now.

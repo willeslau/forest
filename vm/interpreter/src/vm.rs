@@ -180,6 +180,7 @@ where
                 log::info!("Running actors_v4 state migration");
                 // need to flush since we run_cron before the migration
                 let prev_state = self.flush()?;
+                // let chain_store = chain::ChainStore::new(arc_store);
                 // let arc_store = std::sync::Arc::new(self.store);
                 let new_state = nv12::migrate_state_tree(arc_store, prev_state, epoch)?;
                 if new_state != prev_state {
