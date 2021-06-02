@@ -11,6 +11,7 @@ use num_bigint::BigInt;
 use paych::{ChannelInfo, DIR_OUTBOUND, Error, PaychStore};
 use paych::{PaychProvider, TestPaychProvider};
 use paych::Manager as PaychManager;
+use serde::Serialize;
 use state_manager::InvocResult;
 use vm::ActorState;
 use wallet::generate_key;
@@ -669,6 +670,47 @@ async fn test_submit_voucher() {
     assert_eq!(vis.len(), 2)
 
 }
+
+#[async_std::test]
+async fn test_paych_settle() {
+    let expch = Address::new_id(100);
+    let expch2 = Address::new_id(101);
+    let from = Address::new_id(101);
+    let t0 = Address::new_id(102);
+
+    let mut pmgr = new_manager();
+    let mock = pmgr.api.clone();
+
+    let amt = BigInt::new(10);
+    let mcid = pmgr.get_paych(from, to, amt).await.unwrap().mcid.unwrap();
+
+}
+
+
+// Setup begins heres. 
+
+fn create_test_channel_response(ch: Address) -> MessageReceipt {
+    let create_channel_ret = actor::actorv2::init::ExecReturn {
+        id_address: ch,
+        robust_address: ch,
+    };
+    let ccr_ser = create_channel_ret.to_vec();
+}
+
+// func testChannelResponse(t *testing.T, ch address.Address) types.MessageReceipt {
+// 	createChannelRet := init2.ExecReturn{
+// 		IDAddress:     ch,
+// 		RobustAddress: ch,
+// 	}
+// 	createChannelRetBytes, err := cborrpc.Dump(&createChannelRet)
+// 	require.NoError(t, err)
+// 	createChannelResponse := types.MessageReceipt{
+// 		ExitCode: 0,
+// 		Return:   createChannelRetBytes,
+// 	}
+// 	return createChannelResponse
+// }
+
 
 struct TestScaffold {
     mgr: TestManager,
