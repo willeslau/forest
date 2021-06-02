@@ -22,6 +22,8 @@ pub struct Config {
     /// Will use the cids in the header of the file to index the chain.
     pub skip_load: bool,
     pub sync: SyncConfig,
+    pub encrypt_keystore: bool,
+    pub metrics_port: u16,
 }
 
 impl Default for Config {
@@ -36,6 +38,8 @@ impl Default for Config {
             snapshot: false,
             skip_load: false,
             sync: SyncConfig::default(),
+            encrypt_keystore: false,
+            metrics_port: 6116,
         }
     }
 }

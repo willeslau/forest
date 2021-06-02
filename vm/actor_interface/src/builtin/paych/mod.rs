@@ -25,6 +25,7 @@ pub enum State {
     V0(actorv0::paych::State),
     V2(actorv2::paych::State),
     V3(actorv3::paych::State),
+    V4(actorv4::paych::State),
 }
 
 impl State {
@@ -47,6 +48,11 @@ impl State {
                 .get(&actor.state)?
                 .map(State::V3)
                 .ok_or("Actor state doesn't exist in store")?)
+        } else if actor.code == *actorv4::PAYCH_ACTOR_CODE_ID {
+            Ok(store
+                .get(&actor.state)?
+                .map(State::V4)
+                .ok_or("Actor state doesn't exist in store")?)
         } else {
             Err(format!("Unknown actor code {}", actor.code).into())
         }
@@ -57,6 +63,7 @@ impl State {
             State::V0(st) => st.from,
             State::V2(st) => st.from,
             State::V3(st) => st.from,
+            State::V4(st) => st.from,
         }
     }
     pub fn to(&self) -> Address {
@@ -64,6 +71,7 @@ impl State {
             State::V0(st) => st.to,
             State::V2(st) => st.to,
             State::V3(st) => st.to,
+            State::V4(st) => st.to,
         }
     }
     pub fn settling_at(&self) -> ChainEpoch {
@@ -71,6 +79,7 @@ impl State {
             State::V0(st) => st.settling_at,
             State::V2(st) => st.settling_at,
             State::V3(st) => st.settling_at,
+            State::V4(st) => st.settling_at,
         }
     }
     pub fn to_send(&self) -> &TokenAmount {
@@ -78,6 +87,7 @@ impl State {
             State::V0(st) => &st.to_send,
             State::V2(st) => &st.to_send,
             State::V3(st) => &st.to_send,
+            State::V4(st) => &st.to_send,
         }
     }
     fn get_or_load_ls_amt<'a, BS: BlockStore>(
@@ -88,6 +98,7 @@ impl State {
             State::V0(st) => crate::adt::Array::load(&st.lane_states, bs, ActorVersion::V0)?,
             State::V2(st) => crate::adt::Array::load(&st.lane_states, bs, ActorVersion::V2)?,
             State::V3(st) => crate::adt::Array::load(&st.lane_states, bs, ActorVersion::V3)?,
+            State::V4(st) => crate::adt::Array::load(&st.lane_states, bs, ActorVersion::V4)?,
         })
     }
     pub fn lane_count<'a, BS: BlockStore>(&self, bs: &'a BS) -> Result<u64, Box<dyn Error>> {
@@ -112,6 +123,7 @@ pub enum LaneState {
     V0(actorv0::paych::LaneState),
     V2(actorv2::paych::LaneState),
     V3(actorv3::paych::LaneState),
+    V4(actorv4::paych::LaneState),
 }
 
 impl LaneState {
@@ -127,6 +139,7 @@ impl LaneState {
             LaneState::V0(ls) => &ls.redeemed,
             LaneState::V2(ls) => &ls.redeemed,
             LaneState::V3(ls) => &ls.redeemed,
+            LaneState::V4(ls) => &ls.redeemed,
         }
     }
     pub fn nonce(&self) -> u64 {
@@ -134,6 +147,7 @@ impl LaneState {
             LaneState::V0(ls) => ls.nonce,
             LaneState::V2(ls) => ls.nonce,
             LaneState::V3(ls) => ls.nonce,
+            LaneState::V4(ls) => ls.nonce,
         }
     }
     pub fn set_nonce(&mut self, nonce: u64) {
@@ -141,6 +155,7 @@ impl LaneState {
             LaneState::V0(ls) => ls.nonce = nonce,
             LaneState::V2(ls) => ls.nonce = nonce,
             LaneState::V3(ls) => ls.nonce = nonce,
+            LaneState::V4(ls) => ls.nonce = nonce,
         }
     }
     pub fn set_redeemed(&mut self, redeemed: BigInt) {
@@ -148,6 +163,7 @@ impl LaneState {
             LaneState::V0(ls) => ls.redeemed = redeemed,
             LaneState::V2(ls) => ls.redeemed = redeemed,
             LaneState::V3(ls) => ls.redeemed = redeemed,
+            LaneState::V4(ls) => ls.redeemed = redeemed,
         }
     }
 }
@@ -169,6 +185,7 @@ pub enum SignedVoucher {
     V0(actorv0::paych::SignedVoucher),
     V2(actorv2::paych::SignedVoucher),
     V3(actorv3::paych::SignedVoucher),
+    V4(actorv4::paych::SignedVoucher),
 }
 impl SignedVoucher {
     pub fn merges(&self) -> Vec<Merge> {
@@ -195,7 +212,16 @@ impl SignedVoucher {
                     lane: m.lane as u64,
                     nonce:m.nonce
                 }
-            }).collect()}
+                }).collect()
+            }
+            SignedVoucher::V4(sv) => {                
+                sv.merges.iter().map(|m| {
+                Merge {
+                    lane: m.lane as u64,
+                    nonce:m.nonce
+                }
+                }).collect()
+            }
         };
         merges
         
@@ -205,6 +231,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.lane as usize,
             SignedVoucher::V2(sv) => sv.lane as usize,
             SignedVoucher::V3(sv) => sv.lane,
+            SignedVoucher::V4(sv) => sv.lane,
         }
     }
     pub fn nonce(&self) -> u64 {
@@ -212,6 +239,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.nonce,
             SignedVoucher::V2(sv) => sv.nonce,
             SignedVoucher::V3(sv) => sv.nonce,
+            SignedVoucher::V4(sv) => sv.nonce,
         }
     }
     pub fn amount(&self) -> &BigInt {
@@ -219,6 +247,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => &sv.amount,
             SignedVoucher::V2(sv) => &sv.amount,
             SignedVoucher::V3(sv) => &sv.amount,
+            SignedVoucher::V4(sv) => &sv.amount,
         }
     }
     pub fn signature(&self) -> Option<Signature> {
@@ -226,6 +255,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.signature.clone(),
             SignedVoucher::V2(sv) => sv.signature.clone(),
             SignedVoucher::V3(sv) => sv.signature.clone(),
+            SignedVoucher::V4(sv) => sv.signature.clone(),
         }
     }
     pub fn set_signature(&mut self, sig: Signature) {
@@ -233,6 +263,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.signature = Some(sig),
             SignedVoucher::V2(sv) => sv.signature = Some(sig),
             SignedVoucher::V3(sv) => sv.signature = Some(sig),
+            SignedVoucher::V4(sv) => sv.signature = Some(sig),
         }
     }
     pub fn set_nonce(&mut self, nonce: u64) {
@@ -240,6 +271,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.nonce = nonce,
             SignedVoucher::V2(sv) => sv.nonce = nonce,
             SignedVoucher::V3(sv) => sv.nonce = nonce,
+            SignedVoucher::V4(sv) => sv.nonce = nonce,
         }
     }
     pub fn signing_bytes(&self) -> Result<Vec<u8>, Box<dyn Error>> {
@@ -247,6 +279,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.signing_bytes()?,
             SignedVoucher::V2(sv) => sv.signing_bytes()?,
             SignedVoucher::V3(sv) => sv.signing_bytes()?,
+            SignedVoucher::V4(sv) => sv.signing_bytes()?,
         })
     }
     pub fn channel_addr(&self) -> Address {
@@ -254,6 +287,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.channel_addr,
             SignedVoucher::V2(sv) => sv.channel_addr,
             SignedVoucher::V3(sv) => sv.channel_addr,
+            SignedVoucher::V4(sv) => sv.channel_addr,
         }
     }
     pub fn set_channel_addr(&mut self, addr: Address) {
@@ -261,6 +295,7 @@ impl SignedVoucher {
             SignedVoucher::V0(sv) => sv.channel_addr = addr,
             SignedVoucher::V2(sv) => sv.channel_addr= addr,
             SignedVoucher::V3(sv) => sv.channel_addr= addr,
+            SignedVoucher::V4(sv) => sv.channel_addr= addr,
         }
     }
     pub fn extra(&self) -> Option<ModVerifyParams>{
@@ -283,6 +318,12 @@ impl SignedVoucher {
                 data: mvp.data.clone(),
                 
             })}
+            SignedVoucher::V4(sv) => {sv.extra.as_ref().map(|mvp| ModVerifyParams {
+                actor: mvp.actor,
+                method: mvp.method as u64,
+                data: mvp.data.clone(),
+                
+            })}
         }
     }
 }
@@ -293,6 +334,7 @@ pub enum Message {
     V0(MessageS),
     V2(MessageS),
     V3(MessageS),
+    V4(MessageS),
 }
 
 #[derive(Serialize)]
@@ -311,6 +353,9 @@ impl Message {
             ActorVersion::V3 => {
                 Self::V3(MessageS{from})
 
+            }
+            ActorVersion::V4 => {
+                Self::V4(MessageS{from})
             }
         }
     }
@@ -334,6 +379,11 @@ impl Message {
                 message.from,
                 *actorv3::INIT_ACTOR_ADDR,
                 actorv3::init::Method::Exec as u64,
+            ),
+            Message::V4(message) => (
+                message.from,
+                *actorv4::INIT_ACTOR_ADDR,
+                actorv4::init::Method::Exec as u64,
             ),
         };
         let params = actorv0::paych::ConstructorParams { from: from, to: to };
@@ -401,6 +451,21 @@ impl Message {
                     message.from,
                 )
             }
+            Message::V4(message) => {
+                let params = if let SignedVoucher::V4(sv) = sv {
+                    vm::Serialized::serialize(actorv4::paych::UpdateChannelStateParams {
+                        sv,
+                        secret: secret.to_vec(),
+                    })
+                } else {
+                    return Err("Paych SignedVoucher wrong version. Expected V3".into());
+                }?;
+                (
+                    actorv4::paych::Method::UpdateChannelState as u64,
+                    params,
+                    message.from,
+                )
+            }
         };
 
         let ret = UnsignedMessage::builder()
@@ -418,6 +483,7 @@ impl Message {
             Message::V0(message) => (message.from, actorv0::paych::Method::Settle as u64),
             Message::V2(message) => (message.from, actorv2::paych::Method::Settle as u64),
             Message::V3(message) => (message.from, actorv3::paych::Method::Settle as u64),
+            Message::V4(message) => (message.from, actorv4::paych::Method::Settle as u64),
         };
         let ret = UnsignedMessage::builder()
             .to(paych)
@@ -433,6 +499,7 @@ impl Message {
             Message::V0(message) => (message.from, actorv0::paych::Method::Collect as u64),
             Message::V2(message) => (message.from, actorv2::paych::Method::Collect as u64),
             Message::V3(message) => (message.from, actorv3::paych::Method::Collect as u64),
+            Message::V4(message) => (message.from, actorv4::paych::Method::Collect as u64),
         };
         let ret = UnsignedMessage::builder()
             .to(paych)

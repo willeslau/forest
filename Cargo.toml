@@ -45,6 +45,7 @@ members = [
     "utils/net_utils",
     "utils/statediff",
     "utils/test_utils",
+    "utils/metrics",
 ]
 resolver = "2"
 

@@ -113,19 +113,18 @@ pub trait PaychProvider<BS: BlockStore + Send + Sync + 'static> {
         Ok(max_id + 1)
     }
 }
-pub struct DefaultPaychProvider<DB, KS> {
+pub struct DefaultPaychProvider<DB> {
     pub sm: Arc<StateManager<DB>>,
     pub cs: Arc<ChainStore<DB>>,
-    pub keystore: Arc<RwLock<KS>>,
+    pub keystore: Arc<RwLock<KeyStore>>,
     pub mpool: Arc<MessagePool<MpoolRpcProvider<DB>>>,
-    pub wallet: Arc<RwLock<Wallet<KS>>>,
+    pub wallet: Arc<RwLock<Wallet>>,
 }
 
 #[async_trait]
-impl<DB, KS> PaychProvider<DB> for DefaultPaychProvider<DB, KS>
+impl<DB> PaychProvider<DB> for DefaultPaychProvider<DB>
 where
     DB: BlockStore + Sync + Send + 'static,
-    KS: KeyStore + Sync + Send + 'static,
 {
     fn state_account_key(
         &self,

@@ -29,7 +29,7 @@ message_pool = { path = "../blockchain/message_pool/" }
 wallet = { package = "key_management", path = "../key_management/", features = ["json"] }
 num-traits = "0.2"
 async-trait = "0.1"
-fil_types = "0.1"
+fil_types = "0.2"
 networks = { path = "../types/networks" }
 
 vm = { package = "forest_vm", path = "../vm" }

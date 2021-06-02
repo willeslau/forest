@@ -1,17 +1,15 @@
 // Copyright 2020 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
-use async_std::sync::{Arc, Mutex};
+use async_std::sync::Arc;
 use crossbeam::atomic::AtomicCell;
-use futures::stream::SplitSink;
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
 use log::{debug, error, info, warn};
 use tide::http::headers::HeaderValues;
 use tide_websockets::{Message, WebSocketConnection};
 
 use beacon::Beacon;
 use blockstore::BlockStore;
-use wallet::KeyStore;
 
 use crate::data_types::{JsonRpcServerState, StreamingData, SubscriptionHeadChange};
 use crate::rpc_util::{
@@ -19,22 +17,21 @@ use crate::rpc_util::{
     RPC_METHOD_CHAIN_HEAD_SUB, RPC_METHOD_CHAIN_NOTIFY,
 };
 
-async fn rpc_ws_task<DB, KS, B>(
+async fn rpc_ws_task<DB, B>(
     authorization_header: Option<HeaderValues>,
     rpc_call: jsonrpc_v2::RequestObject,
     rpc_server: JsonRpcServerState,
     is_socket_active: Arc<AtomicCell<bool>>,
-    ws_sender: Arc<Mutex<SplitSink<WebSocketConnection, Message>>>,
+    ws_sender: WebSocketConnection,
 ) -> Result<(), tide::Error>
 where
     DB: BlockStore + Send + Sync + 'static,
-    KS: KeyStore + Send + Sync + 'static,
     B: Beacon + Send + Sync + 'static,
 {
     let call_method = rpc_call.method_ref();
     let call_id = rpc_call.id_ref();
 
-    check_permissions::<DB, KS, B>(rpc_server.clone(), call_method, authorization_header).await?;
+    check_permissions::<DB, B>(rpc_server.clone(), call_method, authorization_header).await?;
 
     match call_method {
         RPC_METHOD_CHAIN_NOTIFY => {
@@ -59,11 +56,7 @@ where
                 subscription_id
             );
 
-            ws_sender
-                .lock()
-                .await
-                .send(Message::Text(subscription_response))
-                .await?;
+            ws_sender.send(Message::Text(subscription_response)).await?;
 
             info!(
                 "RPC WS ChainNotify for subscription ID: {}",
@@ -89,8 +82,6 @@ where
                 };
 
                 match ws_sender
-                    .lock()
-                    .await
                     .send(Message::Text(serde_json::to_string(&event_response)?))
                     .await
                 {
@@ -110,31 +101,29 @@ where
         _ => {
             info!("RPC WS called method: {}", call_method);
             let response = call_rpc_str(rpc_server.clone(), rpc_call).await?;
-            ws_sender.lock().await.send(Message::Text(response)).await?;
+            ws_sender.send(Message::Text(response)).await?;
         }
     }
 
     Ok(())
 }
 
-pub async fn rpc_ws_handler<DB, KS, B>(
+pub async fn rpc_ws_handler<DB, B>(
     request: tide::Request<JsonRpcServerState>,
-    ws_stream: WebSocketConnection,
+    mut ws_stream: WebSocketConnection,
 ) -> Result<(), tide::Error>
 where
     DB: BlockStore + Send + Sync + 'static,
-    KS: KeyStore + Send + Sync + 'static,
     B: Beacon + Send + Sync + 'static,
 {
     let (authorization_header, request) = get_auth_header(request);
     let rpc_server = request.state();
     let socket_active = Arc::new(AtomicCell::new(true));
-    let (ws_sender, mut ws_receiver) = ws_stream.split();
-    let ws_sender = Arc::new(Mutex::new(ws_sender));
+    let ws_sender = ws_stream.clone();
 
     info!("Accepted WS connection!");
 
-    while let Some(message_result) = ws_receiver.next().await {
+    while let Some(message_result) = ws_stream.next().await {
         debug!("Received new WS RPC message: {:?}", message_result);
 
         match message_result {
@@ -156,7 +145,7 @@ where
                     {
                         Ok(rpc_call) => {
                             async_std::task::spawn(async move {
-                                match rpc_ws_task::<DB, KS, B>(
+                                match rpc_ws_task::<DB, B>(
                                     authorization_header,
                                     rpc_call,
                                     task_rpc_server,
@@ -172,8 +161,6 @@ where
                                         let msg = format!("WS RPC task error: {}", e);
                                         error!("{}", msg);
                                         task_ws_sender
-                                            .lock()
-                                            .await
                                             .send(Message::Text(get_error_str(3, msg)))
                                             .await
                                             .unwrap();
@@ -185,8 +172,6 @@ where
                             let msg = format!("Error deserializing WS request payload: {}", e);
                             error!("{}", msg);
                             task_ws_sender
-                                .lock()
-                                .await
                                 .send(Message::Text(get_error_str(1, msg)))
                                 .await?;
                         }
@@ -199,11 +184,7 @@ where
                     e
                 );
                 error!("{}", msg);
-                ws_sender
-                    .lock()
-                    .await
-                    .send(Message::Text(get_error_str(2, msg)))
-                    .await?;
+                ws_sender.send(Message::Text(get_error_str(2, msg))).await?;
             }
         }
     }

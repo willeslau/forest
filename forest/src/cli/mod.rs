@@ -14,12 +14,16 @@ pub(super) use self::fetch_params_cmd::FetchCommands;
 pub(super) use self::genesis_cmd::GenesisCommands;
 
 use jsonrpc_v2::Error as JsonRpcError;
+use serde::Serialize;
 use std::cell::RefCell;
 use std::io;
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use structopt::StructOpt;
+
+use blocks::tipset_json::TipsetJson;
+use cid::Cid;
 use utils::{read_file_to_string, read_toml};
 
 /// CLI structure generated when interacting with Forest binary
@@ -68,9 +72,11 @@ pub struct DaemonOpts {
     pub rpc: Option<bool>,
     #[structopt(short, long, help = "The port used for communication")]
     pub port: Option<String>,
+    #[structopt(long, help = "Port used for metrics collection server")]
+    pub metrics_port: Option<u16>,
     #[structopt(short, long, help = "Allow Kademlia (default = true)")]
     pub kademlia: Option<bool>,
-    #[structopt(short, long, help = "Allow MDNS (default = false)")]
+    #[structopt(long, help = "Allow MDNS (default = false)")]
     pub mdns: Option<bool>,
     #[structopt(long, help = "Import a snapshot from a local CAR file or url")]
     pub import_snapshot: Option<String>,
@@ -82,13 +88,16 @@ pub struct DaemonOpts {
                     Assumes a pre-loaded database"
     )]
     pub skip_load: bool,
-    #[structopt(long, help = "Number of worker sync tasks spawned (default is 1")]
-    pub worker_tasks: Option<usize>,
     #[structopt(
         long,
         help = "Number of tipsets requested over chain exchange (default is 200)"
     )]
     pub req_window: Option<i64>,
+    #[structopt(
+        long,
+        help = "Number of tipsets to include in the sample that determines what the network head is"
+    )]
+    pub tipset_sample_size: Option<u8>,
     #[structopt(
         long,
         help = "Amount of Peers we want to be connected to (default is 75)"
@@ -115,6 +124,9 @@ impl DaemonOpts {
             cfg.rpc_port = self.port.to_owned().unwrap_or(cfg.rpc_port);
         } else {
             cfg.enable_rpc = false;
+        }
+        if let Some(metrics_port) = self.metrics_port {
+            cfg.metrics_port = metrics_port;
         }
         if self.import_snapshot.is_some() && self.import_chain.is_some() {
             panic!("Can't set import_snapshot and import_chain at the same time!");
@@ -143,8 +155,8 @@ impl DaemonOpts {
         if let Some(req_window) = &self.req_window {
             cfg.sync.req_window = req_window.to_owned();
         }
-        if let Some(worker_tsk) = &self.worker_tasks {
-            cfg.sync.worker_tasks = worker_tsk.to_owned();
+        if let Some(tipset_sample_size) = self.tipset_sample_size {
+            cfg.sync.tipset_sample_size = tipset_sample_size.into();
         }
 
         Ok(cfg)
@@ -175,17 +187,54 @@ pub(super) async fn block_until_sigint() {
 }
 
 /// Returns a stringified JSON-RPC error
-pub(super) fn stringify_rpc_err(e: JsonRpcError) -> String {
+pub(super) fn handle_rpc_err(e: JsonRpcError) {
     match e {
         JsonRpcError::Full {
             code,
             message,
             data: _,
         } => {
-            return format!("JSON RPC Error: Code: {} Message: {}", code, message);
+            println!("JSON RPC Error: Code: {} Message: {}", code, message);
+            process::exit(code as i32);
         }
         JsonRpcError::Provided { code, message } => {
-            return format!("JSON RPC Error: Code: {} Message: {}", code, message);
+            println!("JSON RPC Error: Code: {} Message: {}", code, message);
+            process::exit(code as i32);
         }
     }
+}
+
+/// Prints a plain HTTP JSON-RPC response result
+pub(super) fn print_rpc_res(res: Result<String, JsonRpcError>) {
+    match res {
+        Ok(obj) => println!("{}", &obj),
+        Err(err) => handle_rpc_err(err),
+    };
+}
+
+/// Prints a pretty HTTP JSON-RPC response result
+pub(super) fn print_rpc_res_pretty<T: Serialize>(res: Result<T, JsonRpcError>) {
+    match res {
+        Ok(obj) => println!("{}", serde_json::to_string_pretty(&obj).unwrap()),
+        Err(err) => handle_rpc_err(err),
+    };
+}
+
+/// Prints a tipset from a HTTP JSON-RPC response result
+pub(super) fn print_rpc_res_cids(res: Result<TipsetJson, JsonRpcError>) {
+    match res {
+        Ok(tipset) => println!(
+            "{}",
+            serde_json::to_string_pretty(
+                &tipset
+                    .0
+                    .cids()
+                    .iter()
+                    .map(|cid: &Cid| cid.to_string())
+                    .collect::<Vec<_>>()
+            )
+            .unwrap()
+        ),
+        Err(err) => handle_rpc_err(err),
+    };
 }
