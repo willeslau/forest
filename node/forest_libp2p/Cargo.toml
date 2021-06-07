@@ -23,7 +23,7 @@ libp2p = { version = "0.35", default-features = false, features = [
 ] }
 futures = "0.3.5"
 futures-util = "0.3.5"
-futures_codec = { version = "0.4.1", features = ["cbor"] }
+futures_codec = { version = "0.4.1", features = ["cbor"], git = "https://github.com/matthunz/futures-codec", rev = "7fb2443f6ce2a5a29d802f5388db6bfca7e2d477" }
 log = "0.4.8"
 async-std = "1.9"
 serde = { version = "1.0", features = ["derive"] }

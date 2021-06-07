@@ -2469,7 +2469,7 @@ dependencies = [
  "futures",
  "futures-util",
  "futures_cbor_codec",
- "futures_codec",
+ "futures_codec 0.4.1 (git+https://github.com/matthunz/futures-codec?rev=7fb2443f6ce2a5a29d802f5388db6bfca7e2d477)",
  "genesis",
  "git-version",
  "ipld_blockstore",
@@ -2712,7 +2712,7 @@ source = "git+https://github.com/najamelan/futures_cbor_codec?rev=de08e31530513f
 dependencies = [
  "bytes 0.5.6",
  "futures",
- "futures_codec",
+ "futures_codec 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc_version",
  "serde",
  "serde_cbor",
@@ -2728,6 +2728,18 @@ dependencies = [
  "futures",
  "memchr",
  "pin-project 0.4.27",
+]
+
+[[package]]
+name = "futures_codec"
+version = "0.4.1"
+source = "git+https://github.com/matthunz/futures-codec?rev=7fb2443f6ce2a5a29d802f5388db6bfca7e2d477#7fb2443f6ce2a5a29d802f5388db6bfca7e2d477"
+dependencies = [
+ "bytes 0.5.6",
+ "futures-sink",
+ "futures-util",
+ "memchr",
+ "pin-project-lite 0.1.11",
  "serde",
  "serde_cbor",
 ]
