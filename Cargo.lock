@@ -2728,6 +2728,8 @@ dependencies = [
  "futures",
  "memchr",
  "pin-project 0.4.27",
+ "serde",
+ "serde_cbor",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use forest_encoding::to_vec;
 use futures::prelude::*;
 use futures_cbor_codec::Decoder;
-use futures_codec::FramedRead;
+use futures_codec::{CborCodec, FramedRead};
 use libp2p::core::ProtocolName;
 use libp2p::request_response::OutboundFailure;
 use libp2p::request_response::RequestResponseCodec;
@@ -81,13 +81,13 @@ where
     where
         T: AsyncRead + Unpin + Send,
     {
-        let mut reader = FramedRead::new(io, Decoder::<RQ>::new());
+        let mut reader = FramedRead::new(io, CborCodec::<RQ, RQ>::new());
         // Expect only one request
         let req = reader
             .next()
             .await
             .transpose()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "read_request returned none"))?;
         Ok(req)
     }
@@ -100,13 +100,13 @@ where
     where
         T: AsyncRead + Unpin + Send,
     {
-        let mut reader = FramedRead::new(io, Decoder::<RS>::new());
+        let mut reader = FramedRead::new(io, CborCodec::<RS, RS>::new());
         // Expect only one response
         let resp = reader
             .next()
             .await
             .transpose()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "read_response returned none"))?;
         Ok(resp)
     }
