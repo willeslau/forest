@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use forest_encoding::to_vec;
 use futures::prelude::*;
 use futures_cbor_codec::Decoder;
-use asynchronous_codec::FramedRead;
+use asynchronous_codec::{CborCodec, FramedRead};
 use libp2p::core::ProtocolName;
 use libp2p::request_response::OutboundFailure;
 use libp2p::request_response::RequestResponseCodec;
@@ -81,7 +81,7 @@ where
     where
         T: AsyncRead + Unpin + Send,
     {
-        let mut reader = FramedRead::new(io, Decoder::<RQ>::new());
+        let mut reader = FramedRead::new(io, CborCodec::<RQ,RQ>::new());
         // Expect only one request
         let req = reader
             .next()
@@ -100,7 +100,7 @@ where
     where
         T: AsyncRead + Unpin + Send,
     {
-        let mut reader = FramedRead::new(io, Decoder::<RS>::new());
+        let mut reader = FramedRead::new(io, CborCodec::<RS,RS>::new());
         // Expect only one response
         let resp = reader
             .next()

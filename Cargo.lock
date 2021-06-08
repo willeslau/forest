@@ -514,6 +514,8 @@ dependencies = [
  "futures-util",
  "memchr",
  "pin-project-lite 0.2.4",
+ "serde",
+ "serde_cbor",
 ]
 
 [[package]]
