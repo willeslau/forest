@@ -942,7 +942,7 @@ version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b9434b9a5aa1450faa3f9cb14ea0e8c53bb5d2b3c1bfd1ab4fc03e9f33fbfb0"
 dependencies = [
- "rustc_version",
+ "rustc_version 0.2.3",
 ]
 
 [[package]]
@@ -2453,6 +2453,7 @@ version = "0.1.0"
 dependencies = [
  "async-std",
  "async-trait",
+ "asynchronous-codec",
  "bytes 1.0.1",
  "chain",
  "fil_clock",
@@ -2469,7 +2470,6 @@ dependencies = [
  "futures",
  "futures-util",
  "futures_cbor_codec",
- "futures_codec",
  "genesis",
  "git-version",
  "ipld_blockstore",
@@ -2708,26 +2708,13 @@ dependencies = [
 [[package]]
 name = "futures_cbor_codec"
 version = "0.3.0"
-source = "git+https://github.com/najamelan/futures_cbor_codec?rev=de08e31530513f993cbf5efef7311ac5194b2256#de08e31530513f993cbf5efef7311ac5194b2256"
+source = "git+https://github.com/najamelan/futures_cbor_codec?rev=95915b396bc7fa9c0bff47745ab62d249d649abb#95915b396bc7fa9c0bff47745ab62d249d649abb"
 dependencies = [
- "bytes 0.5.6",
- "futures",
- "futures_codec",
- "rustc_version",
+ "asynchronous-codec",
+ "bytes 1.0.1",
+ "rustc_version 0.3.3",
  "serde",
  "serde_cbor",
-]
-
-[[package]]
-name = "futures_codec"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce54d63f8b0c75023ed920d46fd71d0cbbb830b0ee012726b5b4f506fb6dea5b"
-dependencies = [
- "bytes 0.5.6",
- "futures",
- "memchr",
- "pin-project 0.4.27",
 ]
 
 [[package]]
@@ -5496,6 +5483,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc_version"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0dfe2087c51c460008730de8b57e6a320782fbfb312e1f4d520e6c6fae155ee"
+dependencies = [
+ "semver 0.11.0",
+]
+
+[[package]]
 name = "rustls"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5903,7 +5899,7 @@ dependencies = [
  "rand 0.7.3",
  "rand_core 0.5.1",
  "ring",
- "rustc_version",
+ "rustc_version 0.2.3",
  "sha2 0.9.3",
  "subtle 2.4.0",
  "x25519-dalek",
@@ -6076,7 +6072,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d022496b16281348b52d0e30ae99e01a73d737b2f45d38fed4edf79f9325a1d5"
 dependencies = [
  "discard",
- "rustc_version",
+ "rustc_version 0.2.3",
  "stdweb-derive",
  "stdweb-internal-macros",
  "stdweb-internal-runtime",
