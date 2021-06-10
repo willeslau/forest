@@ -18,6 +18,7 @@ use std::collections::{HashMap, HashSet};
 use std::default::Default;
 
 pub mod nv12;
+pub mod nv10;
 
 pub const ACTORS_COUNT: usize = 11;
 

@@ -6026,7 +6026,6 @@ dependencies = [
  "actor_interface",
  "async-std",
  "crossbeam-channel",
- "crossbeam-utils 0.8.4",
  "fil_clock",
  "fil_types",
  "forest_address",
