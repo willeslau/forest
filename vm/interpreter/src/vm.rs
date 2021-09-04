@@ -615,6 +615,29 @@ where
     }
 }
 
+fn run_nv10_migration(
+    store: Arc<impl BlockStore + Send + Sync>,
+    prev_state: Cid,
+    epoch: i64,
+) -> Result<Cid, Box<dyn StdError>> {
+    let mut migration = state_migration::StateMigration::new();
+    migration.set_nil_migrations();
+    let (v4_miner_actor_cid, v3_miner_actor_cid) =
+        (*actorv4::MINER_ACTOR_CODE_ID, *actorv3::MINER_ACTOR_CODE_ID);
+    let store_ref = store.clone();
+    let actors_in = StateTree::new_from_root(&*store_ref, &prev_state)
+        .map_err(|e| state_migration::MigrationError::StateTreeCreation(e.to_string()))?;
+    let actors_out = StateTree::new(&*store_ref, StateTreeVersion::V3)
+        .map_err(|e| state_migration::MigrationError::StateTreeCreation(e.to_string()))?;
+
+    migration.add_migrator(
+        v3_miner_actor_cid,
+        state_migration::nv10::miner_migrator_v4(v4_miner_actor_cid),
+    );
+    let new_state = migration.migrate_state_tree(store, epoch, actors_in, actors_out)?;
+    Ok(new_state)
+}
+
 // Performs network version 12 / actors v4 state migration
 fn run_nv12_migration(
     store: Arc<impl BlockStore + Send + Sync>,
