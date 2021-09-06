@@ -21,7 +21,7 @@ use forest_encoding::Cbor;
 use ipld_blockstore::BlockStore;
 use log::debug;
 use message::{ChainMessage, Message, MessageReceipt, UnsignedMessage};
-use networks::{UPGRADE_ACTORS_V4_HEIGHT, UPGRADE_CLAUS_HEIGHT};
+use networks::{UPGRADE_ACTORS_V3_HEIGHT, UPGRADE_ACTORS_V4_HEIGHT, UPGRADE_CLAUS_HEIGHT};
 use num_bigint::{BigInt, Sign};
 use num_traits::Zero;
 use state_tree::StateTree;
@@ -189,6 +189,27 @@ where
                 if new_state != prev_state {
                     log::info!(
                         "actors_v4 state migration successful, took: {}ms",
+                        start.elapsed().as_millis()
+                    );
+                    Ok(Some(new_state))
+                } else {
+                    return Err(format!(
+                        "state post migration must not match. previous state: {}: new state: {}",
+                        prev_state, new_state
+                    )
+                    .into());
+                    // Ok(None)
+                }
+            }
+            x if x == UPGRADE_ACTORS_V3_HEIGHT => {
+                let start = std::time::Instant::now();
+                log::info!("Running actors_v3 state migration");
+                // need to flush since we run_cron before the migration
+                let prev_state = self.flush()?;
+                let new_state = run_nv10_migration(store, prev_state, epoch)?;
+                if new_state != prev_state {
+                    log::info!(
+                        "actors_v3 state migration successful, took: {}ms",
                         start.elapsed().as_millis()
                     );
                     Ok(Some(new_state))
