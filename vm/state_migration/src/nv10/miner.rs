@@ -90,7 +90,7 @@ fn migrate_info<BS: BlockStore + Send + Sync>(
     let window_post_proof_type = old_info
         .seal_proof_type
         .registered_window_post_proof()
-        .map_err(|e| MigrationError::BlockStoreRead("Can't get window PoST proof".to_string()))?;
+        .map_err(|_| MigrationError::BlockStoreRead("Can't get window PoST proof".to_string()))?;
 
     let new_info = MinerInfo3 {
         owner: old_info.owner,
