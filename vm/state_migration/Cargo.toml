@@ -22,7 +22,8 @@ thiserror = "1.0"
 futures = "0.3.14"
 state_tree = { path = "../state_tree" }
 async-std = "1.9.0"
-actor_interface = { path = "../actor_interface" }
+actorv5 = { package = "forest_actor", path = "../actor" }
+actor_interface = { package = "actor_interface", path = "../actor_interface", version = "0.1.0" }
 crossbeam-channel = "0.5.1"
 rayon = "1.5"
 log = "0.4.8"
