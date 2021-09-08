@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use actor_interface::actorv2::miner::Deadline as Miner2Deadline;
 use actor_interface::actorv2::miner::MinerInfo as MinerInfo2;
 use actor_interface::actorv2::miner::State as V2State;
 use actor_interface::actorv3::miner::MinerInfo as MinerInfo3;
@@ -8,6 +9,7 @@ use actor_interface::actorv3::miner::WorkerKeyChange;
 use cid::{Cid, Code::Blake2b256};
 use ipld_blockstore::BlockStore;
 
+use crate::ActorMigrationInput;
 use crate::{ActorMigration, MigrationError, MigrationOutput, MigrationResult};
 
 pub struct MinerMigrator(Cid);
@@ -22,7 +24,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
     fn migrate_state(
         &self,
         store: Arc<BS>,
-        input: crate::ActorMigrationInput,
+        input: ActorMigrationInput,
     ) -> MigrationResult<MigrationOutput> {
         let in_state: V2State = store
             .get(&input.head)
@@ -31,10 +33,17 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
                 MigrationError::BlockStoreRead("Miner actor: could not read v3 state".to_string())
             })?;
 
-        let info_out = migrate_info(store.clone(), in_state.info)?;
+        let store_ref = store.as_ref();
+
+        let info = migrate_info(store_ref, in_state.info)?;
+
+        // let pre_committed_sectors_out =
+        //     migrate_hamt_raw(store, in_state.pre_committed_sectors_expiry);
+
+        let deadlines = migrate_deadlines(store_ref, in_state.deadlines)?;
 
         let out_state = V3State {
-            info: info_out,
+            info,
             pre_commit_deposits: in_state.pre_commit_deposits,
             locked_funds: in_state.locked_funds,
             vesting_funds: in_state.vesting_funds,
@@ -46,7 +55,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
             sectors: in_state.sectors,
             proving_period_start: in_state.proving_period_start,
             current_deadline: in_state.current_deadline as usize,
-            deadlines: in_state.deadlines,
+            deadlines,
             early_terminations: in_state.early_terminations,
         };
 
@@ -62,7 +71,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
 }
 
 fn migrate_info<BS: BlockStore + Send + Sync>(
-    store: Arc<BS>,
+    store: &BS,
     info: Cid,
 ) -> Result<Cid, MigrationError> {
     let old_info: Option<MinerInfo2> = store
@@ -109,4 +118,15 @@ fn migrate_info<BS: BlockStore + Send + Sync>(
     store
         .put(&new_info, Blake2b256)
         .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))
+}
+
+fn migrate_deadlines<BS: BlockStore + Send + Sync>(
+    store: &BS,
+    deadlines: Cid,
+) -> Result<Cid, MigrationError> {
+    let in_deadlines: Option<Miner2Deadline> = store
+        .get(&deadlines)
+        .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
+
+    let out_deadlines = vec![];
 }
