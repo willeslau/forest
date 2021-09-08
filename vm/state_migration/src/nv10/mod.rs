@@ -1,3 +1,3 @@
 mod miner;
 
-pub use miner::miner_migrator_v4;
+pub use miner::miner_migrator_v3;

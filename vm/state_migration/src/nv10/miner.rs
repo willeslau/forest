@@ -12,7 +12,7 @@ use crate::{ActorMigration, MigrationError, MigrationOutput, MigrationResult};
 
 pub struct MinerMigrator(Cid);
 
-pub fn miner_migrator_v4<BS: BlockStore + Send + Sync>(
+pub fn miner_migrator_v3<BS: BlockStore + Send + Sync>(
     cid: Cid,
 ) -> Arc<dyn ActorMigration<BS> + Send + Sync> {
     Arc::new(MinerMigrator(cid))
@@ -34,7 +34,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
         let info_out = migrate_info(store.clone(), in_state.info)?;
 
         let out_state = V3State {
-            info: in_state.info,
+            info: info_out,
             pre_commit_deposits: in_state.pre_commit_deposits,
             locked_funds: in_state.locked_funds,
             vesting_funds: in_state.vesting_funds,
