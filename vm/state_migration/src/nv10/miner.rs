@@ -6,6 +6,11 @@ use actor_interface::actorv2::miner::State as V2State;
 use actor_interface::actorv3::miner::MinerInfo as MinerInfo3;
 use actor_interface::actorv3::miner::State as V3State;
 use actor_interface::actorv3::miner::WorkerKeyChange;
+use actor_interface::{ActorVersion, Array};
+use actorv2::miner::Partition as PartitionV2;
+use actorv2::miner::PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH;
+use actorv2::miner::PARTITION_EXPIRATION_AMT_BITWIDTH;
+use actorv3::miner::Partition as PartitionV3;
 use cid::{Cid, Code::Blake2b256};
 use ipld_blockstore::BlockStore;
 
@@ -120,13 +125,63 @@ fn migrate_info<BS: BlockStore + Send + Sync>(
         .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))
 }
 
-fn migrate_deadlines<BS: BlockStore + Send + Sync>(
-    store: &BS,
-    deadlines: Cid,
-) -> Result<Cid, MigrationError> {
-    let in_deadlines: Option<Miner2Deadline> = store
-        .get(&deadlines)
-        .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
+// fn migrate_deadlines<BS: BlockStore + Send + Sync>(
+//     store: &BS,
+//     deadlines: Cid,
+// ) -> Result<Cid, MigrationError> {
+//     let in_deadlines: Option<Miner2Deadline> = store
+//         .get(&deadlines)
+//         .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
 
-    let out_deadlines = vec![];
+//     if in_deadlines.is_none() {
+//         return Err(MigrationError::BlockStoreRead(
+//             "could not fetch deadlines from blockstore".to_string(),
+//         ));
+//     }
+
+//     let in_deadlines = in_deadlines.unwrap();
+
+//     let out_deadlines = vec![];
+// }
+
+fn migrate_partitions<BS: BlockStore + Send + Sync, V>(
+    store: BS,
+    root: Cid,
+) -> Result<Cid, MigrationError> {
+    let in_array =
+        Array::load(&root, &store, ActorVersion::V2).map_err(|_| MigrationError::Other)?;
+
+    let out_array = Array::new(&store, ActorVersion::V3);
+
+    let in_partition = PartitionV2::new(root);
+
+    in_array.for_each(|i, x| {
+        let expirations_epochs = migrate_amt_raw(
+            &store,
+            in_partition.expirations_epochs,
+            PARTITION_EXPIRATION_AMT_BITWIDTH,
+        );
+
+        let early_terminated = migrate_amt_raw(
+            &store,
+            in_partition.early_terminated,
+            PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH,
+        );
+
+        let out_partition = PartitionV3 {
+            expirations_epochs,
+            early_terminated,
+            faults: in_partition.faults,
+            sectors: in_partition.sectors,
+            unproven: in_partition.unproven,
+            faulty_power: in_partition.faulty_power,
+            unproven_power: in_partition.unproven_power,
+            recovering_power: in_partition.recovering_power,
+            live_power: in_partition.live_power,
+            recoveries: in_partition.recoveries,
+            terminated: in_partition.terminated,
+        };
+
+        return out_array.root;
+    });
 }

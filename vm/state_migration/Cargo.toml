@@ -23,6 +23,8 @@ futures = "0.3.14"
 state_tree = { path = "../state_tree" }
 async-std = "1.9.0"
 actorv5 = { package = "forest_actor", path = "../actor" }
+actorv3 = { package = "forest_actor", version = "2.0" }
+actorv2 = { package = "forest_actor", version = "1.0" }
 actor_interface = { package = "actor_interface", path = "../actor_interface", version = "0.1.0" }
 crossbeam-channel = "0.5.1"
 rayon = "1.5"
