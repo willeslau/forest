@@ -156,12 +156,14 @@ fn migrate_partitions<BS: BlockStore + Send + Sync, V>(
     let in_partition = PartitionV2::new(root);
 
     in_array.for_each(|i, x| {
+        // is result, map_err
         let expirations_epochs = migrate_amt_raw(
             &store,
             in_partition.expirations_epochs,
             PARTITION_EXPIRATION_AMT_BITWIDTH,
         );
 
+        // is result, map_err
         let early_terminated = migrate_amt_raw(
             &store,
             in_partition.early_terminated,
@@ -182,6 +184,9 @@ fn migrate_partitions<BS: BlockStore + Send + Sync, V>(
             terminated: in_partition.terminated,
         };
 
-        return out_array.root;
+        out_array.set(i, x)
     });
+    out_array
+        .flush()
+        .map_err(|_| MigrationError::BlockStoreWrite("couldn't flush array to store".to_string()))
 }
