@@ -11,11 +11,14 @@ use actorv2::miner::Partition as PartitionV2;
 use actorv2::miner::PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH;
 use actorv2::miner::PARTITION_EXPIRATION_AMT_BITWIDTH;
 use actorv3::miner::Partition as PartitionV3;
+use actorv3::miner::PowerPair as MinerV3PowerPair;
 use cid::{Cid, Code::Blake2b256};
 use ipld_blockstore::BlockStore;
 
 use crate::ActorMigrationInput;
 use crate::{ActorMigration, MigrationError, MigrationOutput, MigrationResult};
+
+use super::migrate_amt_raw;
 
 pub struct MinerMigrator(Cid);
 
@@ -153,22 +156,18 @@ fn migrate_partitions<BS: BlockStore + Send + Sync, V>(
 
     let out_array = Array::new(&store, ActorVersion::V3);
 
-    let in_partition = PartitionV2::new(root);
-
-    in_array.for_each(|i, x| {
-        // is result, map_err
+    in_array.for_each(|i, in_partition: &PartitionV2| {
         let expirations_epochs = migrate_amt_raw(
             &store,
-            in_partition.expirations_epochs,
+            &in_partition.expirations_epochs,
             PARTITION_EXPIRATION_AMT_BITWIDTH,
-        );
+        )?;
 
-        // is result, map_err
         let early_terminated = migrate_amt_raw(
             &store,
-            in_partition.early_terminated,
+            &in_partition.early_terminated,
             PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH,
-        );
+        )?;
 
         let out_partition = PartitionV3 {
             expirations_epochs,
@@ -176,15 +175,27 @@ fn migrate_partitions<BS: BlockStore + Send + Sync, V>(
             faults: in_partition.faults,
             sectors: in_partition.sectors,
             unproven: in_partition.unproven,
-            faulty_power: in_partition.faulty_power,
-            unproven_power: in_partition.unproven_power,
-            recovering_power: in_partition.recovering_power,
-            live_power: in_partition.live_power,
+            faulty_power: MinerV3PowerPair {
+                raw: in_partition.faulty_power.raw,
+                qa: in_partition.faulty_power.qa,
+            },
+            unproven_power: MinerV3PowerPair {
+                raw: in_partition.unproven_power.raw,
+                qa: in_partition.unproven_power.qa,
+            },
+            recovering_power: MinerV3PowerPair {
+                raw: in_partition.recovering_power.raw,
+                qa: in_partition.recovering_power.qa,
+            },
+            live_power: MinerV3PowerPair {
+                raw: in_partition.live_power.raw,
+                qa: in_partition.live_power.qa,
+            },
             recoveries: in_partition.recoveries,
             terminated: in_partition.terminated,
         };
 
-        out_array.set(i, x)
+        out_array.set(i, out_partition)
     });
     out_array
         .flush()
