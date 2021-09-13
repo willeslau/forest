@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use actor_interface::actorv2::miner::Deadline as Miner2Deadline;
+use actor_interface::actorv2::miner::Deadlines as Miner2Deadlines;
 use actor_interface::actorv2::miner::MinerInfo as MinerInfo2;
 use actor_interface::actorv2::miner::State as V2State;
+use actor_interface::actorv3::miner::Deadlines as Miner3Deadlines;
 use actor_interface::actorv3::miner::MinerInfo as MinerInfo3;
 use actor_interface::actorv3::miner::State as V3State;
 use actor_interface::actorv3::miner::WorkerKeyChange;
@@ -10,6 +11,7 @@ use actor_interface::{ActorVersion, Array};
 use actorv2::miner::Partition as PartitionV2;
 use actorv2::miner::PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH;
 use actorv2::miner::PARTITION_EXPIRATION_AMT_BITWIDTH;
+use actorv3::miner::Deadline;
 use actorv3::miner::Partition as PartitionV3;
 use actorv3::miner::PowerPair as MinerV3PowerPair;
 use cid::{Cid, Code::Blake2b256};
@@ -128,24 +130,33 @@ fn migrate_info<BS: BlockStore + Send + Sync>(
         .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))
 }
 
-// fn migrate_deadlines<BS: BlockStore + Send + Sync>(
-//     store: &BS,
-//     deadlines: Cid,
-// ) -> Result<Cid, MigrationError> {
-//     let in_deadlines: Option<Miner2Deadline> = store
-//         .get(&deadlines)
-//         .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
+fn migrate_deadlines<BS: BlockStore + Send + Sync>(
+    store: &BS,
+    deadlines: Cid,
+) -> Result<Cid, MigrationError> {
+    let in_deadlines: Option<Miner2Deadlines> = store
+        .get(&deadlines)
+        .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
 
-//     if in_deadlines.is_none() {
-//         return Err(MigrationError::BlockStoreRead(
-//             "could not fetch deadlines from blockstore".to_string(),
-//         ));
-//     }
+    if in_deadlines.is_none() {
+        return Err(MigrationError::BlockStoreRead(
+            "could not fetch deadlines from blockstore".to_string(),
+        ));
+    }
 
-//     let in_deadlines = in_deadlines.unwrap();
+    let in_deadlines = in_deadlines.unwrap();
 
-//     let out_deadlines = vec![];
-// }
+    let out_deadlines = Miner3Deadlines { due: vec![] };
+
+    let deadline_template =
+        Deadline::new(store).map_err(|e| MigrationError::BlockStoreRead(e.to_string()));
+
+    for (i, c) in in_deadlines.due.iter().enumerate() {}
+
+    store
+        .put(&out_deadlines, Blake2b256)
+        .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))
+}
 
 fn migrate_partitions<BS: BlockStore + Send + Sync, V>(
     store: BS,
