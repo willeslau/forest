@@ -21,7 +21,3 @@ pub fn migrate_amt_raw<BS: BlockStore + Send + Sync>(
         .flush()
         .map_err(|e| MigrationError::FlushFailed(e.to_string()))
 }
-
-pub fn deadline_key(cid: Cid) -> String {
-    format!("d-{}", cid.to_string())
-}

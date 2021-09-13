@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use actor_interface::actorv2::miner::Deadline as Miner2Deadline;
 use actor_interface::actorv2::miner::Deadlines as Miner2Deadlines;
 use actor_interface::actorv2::miner::MinerInfo as MinerInfo2;
 use actor_interface::actorv2::miner::State as V2State;
@@ -9,8 +10,9 @@ use actor_interface::actorv3::miner::State as V3State;
 use actor_interface::actorv3::miner::WorkerKeyChange;
 use actor_interface::{ActorVersion, Array};
 use actorv2::miner::Partition as PartitionV2;
-use actorv2::miner::PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH;
-use actorv2::miner::PARTITION_EXPIRATION_AMT_BITWIDTH;
+use actorv2::miner::{
+    PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH, PARTITION_EXPIRATION_AMT_BITWIDTH,
+};
 use actorv3::miner::Deadline;
 use actorv3::miner::Partition as PartitionV3;
 use actorv3::miner::PowerPair as MinerV3PowerPair;
@@ -151,31 +153,49 @@ fn migrate_deadlines<BS: BlockStore + Send + Sync>(
     let deadline_template =
         Deadline::new(store).map_err(|e| MigrationError::BlockStoreRead(e.to_string()));
 
-    for (i, c) in in_deadlines.due.iter().enumerate() {}
+    for (i, c) in in_deadlines.due.iter().enumerate() {
+        let out_deadline_cid: Option<Cid> = store
+            .get(c)
+            .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
+
+        let in_deadline: Option<Miner2Deadline> = store
+            .get(c)
+            .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
+
+        if in_deadline.is_none() {
+            return Err(MigrationError::BlockStoreRead(
+                "Could not find deadline".to_string(),
+            ));
+        }
+
+        let in_deadline = in_deadline.unwrap();
+
+        let partitions = migrate_partitions(store.to_owned(), in_deadline.partitions)?;
+    }
 
     store
         .put(&out_deadlines, Blake2b256)
         .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))
 }
 
-fn migrate_partitions<BS: BlockStore + Send + Sync, V>(
-    store: BS,
+fn migrate_partitions<BS: BlockStore + Send + Sync>(
+    store: &BS,
     root: Cid,
 ) -> Result<Cid, MigrationError> {
     let in_array =
-        Array::load(&root, &store, ActorVersion::V2).map_err(|_| MigrationError::Other)?;
+        Array::load(&root, store, ActorVersion::V2).map_err(|_| MigrationError::Other)?;
 
-    let out_array = Array::new(&store, ActorVersion::V3);
+    let out_array = Array::new(store, ActorVersion::V3);
 
     in_array.for_each(|i, in_partition: &PartitionV2| {
         let expirations_epochs = migrate_amt_raw(
-            &store,
+            store,
             &in_partition.expirations_epochs,
             PARTITION_EXPIRATION_AMT_BITWIDTH,
         )?;
 
         let early_terminated = migrate_amt_raw(
-            &store,
+            store,
             &in_partition.early_terminated,
             PARTITION_EARLY_TERMINATION_ARRAY_AMT_BITWIDTH,
         )?;
