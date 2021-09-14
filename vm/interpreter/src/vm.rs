@@ -653,7 +653,7 @@ fn run_nv10_migration(
 
     migration.add_migrator(
         v3_miner_actor_cid,
-        state_migration::nv10::miner_migrator_v4(v4_miner_actor_cid),
+        state_migration::nv10::miner_migrator_v3(v4_miner_actor_cid),
     );
     let new_state = migration.migrate_state_tree(store, epoch, actors_in, actors_out)?;
     Ok(new_state)

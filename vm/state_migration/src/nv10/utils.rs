@@ -13,9 +13,9 @@ pub fn migrate_amt_raw<BS: BlockStore + Send + Sync>(
         MigrationError::BlockStoreRead("Could not load Amt from root node".to_string())
     })?;
 
-    let out_root_node: Amt<Cid, BS> = Amt::new_with_bit_width(store, new_bit_width);
+    let mut out_root_node: Amt<Cid, BS> = Amt::new_with_bit_width(store, new_bit_width);
 
-    in_root_node.for_each(|key, data| out_root_node.set(key, *data).map_err(|e| e.into()));
+    let _ = in_root_node.for_each(|key, data| out_root_node.set(key, *data).map_err(|e| e.into()));
 
     out_root_node
         .flush()

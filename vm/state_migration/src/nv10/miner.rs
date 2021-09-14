@@ -14,6 +14,7 @@ use actorv3::miner::Deadline;
 use actorv3::miner::Partition as PartitionV3;
 use actorv3::miner::PowerPair as MinerV3PowerPair;
 use cid::{Cid, Code::Blake2b256};
+use forest_bitfield::BitField;
 use ipld_blockstore::BlockStore;
 
 use crate::ActorMigrationInput;
@@ -145,15 +146,21 @@ fn migrate_deadlines<BS: BlockStore + Send + Sync>(
 
     let in_deadlines = in_deadlines.unwrap();
 
-    let out_deadlines = Miner3Deadlines { due: vec![] };
+    let mut out_deadlines = Miner3Deadlines { due: vec![] };
 
-    let deadline_template =
-        Deadline::new(store).map_err(|e| MigrationError::BlockStoreRead(e.to_string()));
+    for c in in_deadlines.due.iter() {
+        let mut out_deadline =
+            Deadline::new(store).map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
 
-    for (i, c) in in_deadlines.due.iter().enumerate() {
         let out_deadline_cid: Option<Cid> = store
             .get(c)
             .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
+
+        if out_deadline_cid.is_none() {
+            return Err(MigrationError::Other);
+        }
+
+        let out_deadline_cid = out_deadline_cid.unwrap();
 
         let in_deadline: Option<Miner2Deadline> = store
             .get(c)
@@ -168,6 +175,28 @@ fn migrate_deadlines<BS: BlockStore + Send + Sync>(
         let in_deadline = in_deadline.unwrap();
 
         let partitions = migrate_partitions(store.to_owned(), in_deadline.partitions)?;
+
+        let expirations_epochs = migrate_amt_raw(store, &in_deadline.expirations_epochs, 5usize)
+            .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))?;
+
+        out_deadline.partitions = partitions;
+        out_deadline.expirations_epochs = expirations_epochs;
+        out_deadline.partitions_posted = in_deadline.post_submissions;
+        out_deadline.early_terminations = in_deadline.early_terminations;
+        out_deadline.live_sectors = in_deadline.live_sectors;
+        out_deadline.total_sectors = in_deadline.total_sectors;
+        out_deadline.faulty_power = MinerV3PowerPair {
+            qa: in_deadline.faulty_power.qa.clone(),
+            raw: in_deadline.faulty_power.raw.clone(),
+        };
+
+        if out_deadline.live_sectors == 0 {
+            out_deadline.partitions_posted == BitField::new();
+        }
+
+        store.put(&out_deadline, Blake2b256);
+
+        out_deadlines.due.push(out_deadline_cid);
     }
 
     store
