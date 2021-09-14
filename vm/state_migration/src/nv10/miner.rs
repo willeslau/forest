@@ -191,10 +191,12 @@ fn migrate_deadlines<BS: BlockStore + Send + Sync>(
         };
 
         if out_deadline.live_sectors == 0 {
-            out_deadline.partitions_posted == BitField::new();
+            out_deadline.partitions_posted = BitField::new();
         }
 
-        store.put(&out_deadline, Blake2b256);
+        store
+            .put(&out_deadline, Blake2b256)
+            .map_err(|e| MigrationError::FlushFailed(e.to_string()))?;
 
         out_deadlines.due.push(out_deadline_cid);
     }
@@ -213,39 +215,42 @@ fn migrate_partitions<BS: BlockStore + Send + Sync>(
 
     let mut out_array = Array::new(store, ActorVersion::V3);
 
-    in_array.for_each(|i, in_partition: &PartitionV2| {
-        let expirations_epochs = migrate_amt_raw(store, &in_partition.expirations_epochs, 4usize)?;
+    in_array
+        .for_each(|i, in_partition: &PartitionV2| {
+            let expirations_epochs =
+                migrate_amt_raw(store, &in_partition.expirations_epochs, 4usize)?;
 
-        let early_terminated = migrate_amt_raw(store, &in_partition.early_terminated, 3usize)?;
+            let early_terminated = migrate_amt_raw(store, &in_partition.early_terminated, 3usize)?;
 
-        let out_partition = PartitionV3 {
-            expirations_epochs,
-            early_terminated,
-            faults: in_partition.faults.clone(),
-            sectors: in_partition.sectors.clone(),
-            unproven: in_partition.unproven.clone(),
-            faulty_power: MinerV3PowerPair {
-                raw: in_partition.faulty_power.raw.clone(),
-                qa: in_partition.faulty_power.qa.clone(),
-            },
-            unproven_power: MinerV3PowerPair {
-                raw: in_partition.unproven_power.raw.clone(),
-                qa: in_partition.unproven_power.qa.clone(),
-            },
-            recovering_power: MinerV3PowerPair {
-                raw: in_partition.recovering_power.raw.clone(),
-                qa: in_partition.recovering_power.qa.clone(),
-            },
-            live_power: MinerV3PowerPair {
-                raw: in_partition.live_power.raw.clone(),
-                qa: in_partition.live_power.qa.clone(),
-            },
-            recoveries: in_partition.recoveries.clone(),
-            terminated: in_partition.terminated.clone(),
-        };
+            let out_partition = PartitionV3 {
+                expirations_epochs,
+                early_terminated,
+                faults: in_partition.faults.clone(),
+                sectors: in_partition.sectors.clone(),
+                unproven: in_partition.unproven.clone(),
+                faulty_power: MinerV3PowerPair {
+                    raw: in_partition.faulty_power.raw.clone(),
+                    qa: in_partition.faulty_power.qa.clone(),
+                },
+                unproven_power: MinerV3PowerPair {
+                    raw: in_partition.unproven_power.raw.clone(),
+                    qa: in_partition.unproven_power.qa.clone(),
+                },
+                recovering_power: MinerV3PowerPair {
+                    raw: in_partition.recovering_power.raw.clone(),
+                    qa: in_partition.recovering_power.qa.clone(),
+                },
+                live_power: MinerV3PowerPair {
+                    raw: in_partition.live_power.raw.clone(),
+                    qa: in_partition.live_power.qa.clone(),
+                },
+                recoveries: in_partition.recoveries.clone(),
+                terminated: in_partition.terminated.clone(),
+            };
 
-        out_array.set(i, out_partition)
-    });
+            out_array.set(i, out_partition)
+        })
+        .map_err(|_| MigrationError::BlockStoreWrite("failed to migrate partitions".to_string()))?;
     out_array
         .flush()
         .map_err(|_| MigrationError::BlockStoreWrite("couldn't flush array to store".to_string()))
