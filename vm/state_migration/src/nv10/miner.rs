@@ -48,8 +48,25 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
 
         let info = migrate_info(store_ref, in_state.info)?;
 
+        let pre_committed_sectors_expiry_out =
+            migrate_amt_raw(store_ref, &in_state.pre_committed_sectors_expiry, 3)?;
+
         let pre_committed_sectors_out =
-            migrate_hamt_raw(store_ref, &in_state.pre_committed_sectors_expiry, 5);
+            migrate_hamt_raw(store_ref, &in_state.pre_committed_sectors_expiry, 5)?;
+
+        let sectors: Option<Cid> = store_ref
+            .get(&in_state.sectors)
+            .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
+
+        if sectors.is_none() {
+            return Err(MigrationError::BlockStoreRead(
+                "Could not get sectors from block store".to_string(),
+            ));
+        }
+
+        let sectors = sectors.unwrap();
+
+        let sectors_out = migrate_hamt_raw(store_ref, &sectors, 5)?;
 
         let deadlines = migrate_deadlines(store_ref, in_state.deadlines)?;
 
@@ -60,10 +77,10 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
             vesting_funds: in_state.vesting_funds,
             fee_debt: in_state.fee_debt,
             initial_pledge: in_state.initial_pledge,
-            pre_committed_sectors: in_state.pre_committed_sectors,
+            pre_committed_sectors: pre_committed_sectors_out,
             pre_committed_sectors_expiry: in_state.pre_committed_sectors_expiry,
             allocated_sectors: in_state.allocated_sectors,
-            sectors: in_state.sectors,
+            sectors: sectors_out,
             proving_period_start: in_state.proving_period_start,
             current_deadline: in_state.current_deadline as usize,
             deadlines,
