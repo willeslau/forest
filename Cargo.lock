@@ -6006,6 +6006,7 @@ dependencies = [
  "futures",
  "ipld_amt 1.0.0",
  "ipld_blockstore",
+ "ipld_hamt 2.0.0",
  "libp2p 0.35.1",
  "log",
  "num_cpus",

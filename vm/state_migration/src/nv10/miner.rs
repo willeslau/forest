@@ -21,6 +21,7 @@ use crate::ActorMigrationInput;
 use crate::{ActorMigration, MigrationError, MigrationOutput, MigrationResult};
 
 use super::migrate_amt_raw;
+use super::migrate_hamt_raw;
 
 pub struct MinerMigrator(Cid);
 
@@ -47,8 +48,8 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
 
         let info = migrate_info(store_ref, in_state.info)?;
 
-        // let pre_committed_sectors_out =
-        //     migrate_hamt_raw(store, in_state.pre_committed_sectors_expiry);
+        let pre_committed_sectors_out =
+            migrate_hamt_raw(store_ref, &in_state.pre_committed_sectors_expiry, 5);
 
         let deadlines = migrate_deadlines(store_ref, in_state.deadlines)?;
 
