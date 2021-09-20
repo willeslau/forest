@@ -1,5 +1,4 @@
 use cid::Cid;
-use forest_hash_utils::BytesKey;
 use ipld_amt::Amt;
 use ipld_blockstore::BlockStore;
 use ipld_hamt::Hamt;
@@ -29,14 +28,14 @@ pub fn migrate_hamt_raw<BS: BlockStore + Send + Sync>(
     root: &Cid,
     new_bit_width: u32,
 ) -> Result<Cid, MigrationError> {
-    let in_root_node = Hamt::load(root, store).map_err(|e| {
+    let in_root_node: Hamt<BS, Cid> = Hamt::load(root, store).map_err(|e| {
         MigrationError::BlockStoreRead("Could not load Hamt from root node".to_string())
     })?;
 
-    let out_root_node: Hamt<BS, Cid> = Hamt::new_with_bit_width(store, new_bit_width);
+    let mut out_root_node: Hamt<BS, Cid> = Hamt::new_with_bit_width(store, new_bit_width);
 
     let _ = in_root_node.for_each(|key, data| {
-        let _ = out_root_node.set(key, *data);
+        let _ = out_root_node.set(key.to_owned(), *data);
         Ok(())
     });
 

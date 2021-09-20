@@ -78,7 +78,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
             fee_debt: in_state.fee_debt,
             initial_pledge: in_state.initial_pledge,
             pre_committed_sectors: pre_committed_sectors_out,
-            pre_committed_sectors_expiry: in_state.pre_committed_sectors_expiry,
+            pre_committed_sectors_expiry: pre_committed_sectors_expiry_out,
             allocated_sectors: in_state.allocated_sectors,
             sectors: sectors_out,
             proving_period_start: in_state.proving_period_start,
