@@ -41,3 +41,11 @@ pub fn migrate_hamt_raw<BS: BlockStore + Send + Sync>(
         .flush()
         .map_err(|e| MigrationError::FlushFailed(e.to_string()))
 }
+
+pub fn migrate_hamt_hamt_raw<BS: BlockStore + Send + Sync>(
+    store: &BS,
+    root: &Cid,
+    new_bit_width: u32,
+) -> Result<Cid, MigrationError> {
+    todo!()
+}

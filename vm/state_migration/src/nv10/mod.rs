@@ -1,4 +1,5 @@
 mod init;
+mod market;
 mod miner;
 mod utils;
 

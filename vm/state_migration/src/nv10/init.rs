@@ -1,4 +1,6 @@
-use crate::{ActorMigration, MigrationError, MigrationOutput, MigrationResult};
+use crate::{
+    ActorMigration, ActorMigrationInput, MigrationError, MigrationOutput, MigrationResult,
+};
 use actor_interface::actorv2::init::State as Init2State;
 use actor_interface::actorv3::init::State as Init3State;
 use actor_interface::actorv3::INIT_ACTOR_CODE_ID;
@@ -14,7 +16,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for InitMigrator {
     fn migrate_state(
         &self,
         store: std::sync::Arc<BS>,
-        input: crate::ActorMigrationInput,
+        input: ActorMigrationInput,
     ) -> MigrationResult<MigrationOutput> {
         let in_state: Init2State = store
             .get(&input.head)
