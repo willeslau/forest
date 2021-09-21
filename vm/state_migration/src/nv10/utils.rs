@@ -10,9 +10,8 @@ pub fn migrate_amt_raw<BS: BlockStore + Send + Sync>(
     root: &Cid,
     new_bit_width: usize,
 ) -> Result<Cid, MigrationError> {
-    let in_root_node = Amt::load(root, store).map_err(|e| {
-        MigrationError::BlockStoreRead("Could not load Amt from root node".to_string())
-    })?;
+    let in_root_node =
+        Amt::load(root, store).map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
 
     let mut out_root_node: Amt<Cid, BS> = Amt::new_with_bit_width(store, new_bit_width);
 
@@ -28,9 +27,8 @@ pub fn migrate_hamt_raw<BS: BlockStore + Send + Sync>(
     root: &Cid,
     new_bit_width: u32,
 ) -> Result<Cid, MigrationError> {
-    let in_root_node: Hamt<BS, Cid> = Hamt::load(root, store).map_err(|e| {
-        MigrationError::BlockStoreRead("Could not load Hamt from root node".to_string())
-    })?;
+    let in_root_node: Hamt<BS, Cid> =
+        Hamt::load(root, store).map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
 
     let mut out_root_node: Hamt<BS, Cid> = Hamt::new_with_bit_width(store, new_bit_width);
 
