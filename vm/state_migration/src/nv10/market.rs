@@ -50,7 +50,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MarketMigrator {
         )?;
 
         let deal_ops_by_epoch =
-            migrate_hamt_hamt_raw(store.as_ref(), &in_state.deal_ops_by_epoch, 5)?;
+            migrate_hamt_hamt_raw(store.as_ref(), &in_state.deal_ops_by_epoch, 5, 5)?;
 
         let out_state = MarketV3State {
             proposals,
@@ -79,7 +79,10 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MarketMigrator {
 
 fn map_pending_proposals<BS: BlockStore + Send + Sync>(
     store: &BS,
-    pending_proposals: &Cid,
+    root: &Cid,
 ) -> Result<Cid, MigrationError> {
+    let old_pending_proposals: Option<Cid> = store
+        .get(&root)
+        .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
     todo!()
 }

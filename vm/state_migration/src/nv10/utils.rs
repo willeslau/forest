@@ -1,4 +1,4 @@
-use cid::Cid;
+use cid::{Cid, Code::Blake2b256};
 use ipld_amt::Amt;
 use ipld_blockstore::BlockStore;
 use ipld_hamt::Hamt;
@@ -45,7 +45,27 @@ pub fn migrate_hamt_raw<BS: BlockStore + Send + Sync>(
 pub fn migrate_hamt_hamt_raw<BS: BlockStore + Send + Sync>(
     store: &BS,
     root: &Cid,
-    new_bit_width: u32,
+    new_outer_bitwidth: u32,
+    new_inner_bitwidth: u32,
 ) -> Result<Cid, MigrationError> {
-    todo!()
+    let in_root_node_outer: Hamt<BS, Cid> =
+        Hamt::load(root, store).map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
+
+    let out_root_node_outer: Hamt<BS, Cid> = Hamt::new_with_bit_width(store, new_outer_bitwidth);
+
+    in_root_node_outer.for_each(|k, v| {
+        let out_inner = migrate_hamt_raw(store, v, new_inner_bitwidth)?;
+        let _ = out_root_node_outer
+            .set(*k, *v)
+            .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))?;
+        Ok(())
+    });
+
+    out_root_node_outer
+        .flush()
+        .map_err(|e| MigrationError::FlushFailed(e.to_string()))?;
+
+    store
+        .put(&out_root_node_outer, Blake2b256)
+        .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))
 }
