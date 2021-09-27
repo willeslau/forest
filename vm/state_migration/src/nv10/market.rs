@@ -4,6 +4,7 @@ use cid::{Cid, Code::Blake2b256};
 use ipld_blockstore::BlockStore;
 
 use actor_interface::actorv2::market::State as MarketV2State;
+use actor_interface::actorv2::Map;
 use actor_interface::actorv3::market::State as MarketV3State;
 use actor_interface::actorv3::MARKET_ACTOR_CODE_ID;
 use actorv3::market::{PROPOSALS_AMT_BITWIDTH, STATES_AMT_BITWIDTH};
@@ -81,8 +82,27 @@ fn map_pending_proposals<BS: BlockStore + Send + Sync>(
     store: &BS,
     root: &Cid,
 ) -> Result<Cid, MigrationError> {
-    let old_pending_proposals: Option<Cid> = store
+    let root: Option<Cid> = store
         .get(&root)
         .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
-    todo!()
+
+    if root.is_none() {
+        return Err(MigrationError::BlockStoreRead(
+            "Could not find pending proposals from blockstore".to_string(),
+        ));
+    }
+
+    let root = root.unwrap();
+
+    let old_pending_proposals = Map::V2::load(&root, &store);
+
+    let mut new_pending_proposals = Map::V3::new(&store);
+
+    let _ = old_pending_proposals.for_each(|key, value| {
+        new_pending_proposals.set(key, value);
+    });
+
+    new_pending_proposals
+        .flush()
+        .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))
 }
