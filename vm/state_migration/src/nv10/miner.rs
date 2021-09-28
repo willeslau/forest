@@ -41,7 +41,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
             .get(&input.head)
             .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?
             .ok_or_else(|| {
-                MigrationError::BlockStoreRead("Miner actor: could not read v3 state".to_string())
+                MigrationError::BlockStoreRead("Miner actor: could not read v2 state".to_string())
             })?;
 
         let store_ref = store.as_ref();
