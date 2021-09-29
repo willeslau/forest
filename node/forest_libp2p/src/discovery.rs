@@ -4,6 +4,7 @@
 use async_std::stream::{self, Interval};
 use async_std::task;
 use futures::prelude::*;
+use libp2p::mdns::MdnsConfig;
 use libp2p::{
     core::{
         connection::{ConnectionId, ListenerId},
@@ -143,7 +144,7 @@ impl<'a> DiscoveryConfig<'a> {
 
         let mdns_opt = if enable_mdns {
             Some(task::block_on(async {
-                Mdns::new().await.expect("Could not start mDNS")
+                Mdns::new(MdnsConfig::default()).await.expect("Could not start mDNS")
             }))
         } else {
             None
@@ -309,16 +310,16 @@ impl NetworkBehaviour for DiscoveryBehaviour {
         self.kademlia.inject_new_external_addr(addr)
     }
 
-    fn inject_expired_listen_addr(&mut self, addr: &Multiaddr) {
-        self.kademlia.inject_expired_listen_addr(addr);
+    fn inject_expired_listen_addr(&mut self, id: ListenerId, addr: &Multiaddr) {
+        self.kademlia.inject_expired_listen_addr(id, addr);
     }
 
     fn inject_dial_failure(&mut self, peer_id: &PeerId) {
         self.kademlia.inject_dial_failure(peer_id)
     }
 
-    fn inject_new_listen_addr(&mut self, addr: &Multiaddr) {
-        self.kademlia.inject_new_listen_addr(addr)
+    fn inject_new_listen_addr(&mut self, id: ListenerId, addr: &Multiaddr) {
+        self.kademlia.inject_new_listen_addr(id, addr)
     }
 
     fn inject_listener_error(&mut self, id: ListenerId, err: &(dyn std::error::Error + 'static)) {
@@ -405,6 +406,12 @@ impl NetworkBehaviour for DiscoveryBehaviour {
                             score,
                         })
                     }
+                    NetworkBehaviourAction::CloseConnection { peer_id, connection } => {
+                        return Poll::Ready(NetworkBehaviourAction::CloseConnection {
+                            peer_id,
+                            connection
+                        })
+                    },
                 }
             }
         }
@@ -444,6 +451,12 @@ impl NetworkBehaviour for DiscoveryBehaviour {
                         score,
                     })
                 }
+                NetworkBehaviourAction::CloseConnection { peer_id, connection } => {
+                    return Poll::Ready(NetworkBehaviourAction::CloseConnection {
+                        peer_id,
+                        connection,
+                    })
+                },
             }
         }
 
