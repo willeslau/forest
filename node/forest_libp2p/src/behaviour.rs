@@ -211,10 +211,7 @@ impl NetworkBehaviourEventProcess<PingEvent> for ForestBehaviour {
 impl NetworkBehaviourEventProcess<IdentifyEvent> for ForestBehaviour {
     fn inject_event(&mut self, event: IdentifyEvent) {
         match event {
-            IdentifyEvent::Received {
-                peer_id,
-                info,
-            } => {
+            IdentifyEvent::Received { peer_id, info } => {
                 trace!("Identified Peer {}", peer_id);
                 trace!("protocol_version {}", info.protocol_version);
                 trace!("agent_version {}", info.agent_version);
@@ -470,11 +467,7 @@ impl ForestBehaviour {
             gossipsub,
             discovery: discovery_config.finish(),
             ping: Ping::default(),
-            identify: Identify::new(IdentifyConfig::new(
-                "ipfs/0.1.0".into(),local_key.public()
-            )
-
-            ),
+            identify: Identify::new(IdentifyConfig::new("ipfs/0.1.0".into(), local_key.public())),
 
             bitswap,
             hello: RequestResponse::new(HelloCodec::default(), hp, req_res_config.clone()),

@@ -20,9 +20,10 @@ use futures::channel::oneshot::Sender as OneShotSender;
 use futures::select;
 use futures_util::stream::StreamExt;
 use ipld_blockstore::BlockStore;
+use libp2p::core::multihash::Multihash;
 pub use libp2p::gossipsub::IdentTopic;
 pub use libp2p::gossipsub::Topic;
-use libp2p::multiaddr::{Protocol};
+use libp2p::multiaddr::Protocol;
 use libp2p::request_response::ResponseChannel;
 use libp2p::swarm::SwarmEvent;
 use libp2p::{
@@ -34,7 +35,6 @@ use libp2p::{
     mplex, noise, yamux, PeerId, Swarm, Transport,
 };
 use libp2p::{core::Multiaddr, swarm::SwarmBuilder};
-use libp2p::core::multihash::Multihash;
 use log::{debug, error, info, trace, warn};
 use std::collections::HashMap;
 use std::path::Path;
@@ -200,18 +200,42 @@ where
                 swarm_event = swarm_stream.next() => match swarm_event {
                     // outbound events
                     Some(event) => match event {
-                        SwarmEvent::ConnectionEstablished { peer_id, endpoint, num_established } => todo!(),
-                        SwarmEvent::ConnectionClosed { peer_id, endpoint, num_established, cause } => todo!(),
-                        SwarmEvent::IncomingConnection { local_addr, send_back_addr } => todo!(),
-                        SwarmEvent::IncomingConnectionError { local_addr, send_back_addr, error } => todo!(),
-                        SwarmEvent::BannedPeer { peer_id, endpoint } => todo!(),
-                        SwarmEvent::UnreachableAddr { peer_id, address, error, attempts_remaining } => todo!(),
-                        SwarmEvent::UnknownPeerUnreachableAddr { address, error } => todo!(),
-                        SwarmEvent::NewListenAddr { listener_id, address } => todo!(),
-                        SwarmEvent::ExpiredListenAddr { listener_id, address } => todo!(),
-                        SwarmEvent::ListenerClosed { listener_id, addresses, reason } => todo!(),
-                        SwarmEvent::ListenerError { listener_id, error } => todo!(),
-                        SwarmEvent::Dialing(_) => todo!(),
+                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                            emit_event(&self.network_sender_out, NetworkEvent::PeerConnected(peer_id)).await;
+                        },
+                        SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                            emit_event(&self.network_sender_out, NetworkEvent::PeerDisconnected(peer_id)).await;
+                        },
+                        SwarmEvent::IncomingConnection { local_addr, send_back_addr } => {
+                            trace!("Incoming connection from: {}, to: {}", send_back_addr, local_addr);
+                        },
+                        SwarmEvent::IncomingConnectionError { local_addr, send_back_addr, error } => {
+                            debug!("Incoming connection failed from: {}, to:{}, error: {}", send_back_addr, local_addr, error);
+                        },
+                        SwarmEvent::BannedPeer { peer_id, .. } => {
+                            debug!("Tried connecting to a banned peer: {}", peer_id);
+                        },
+                        SwarmEvent::UnreachableAddr { peer_id, address, error, attempts_remaining } => {
+                            debug!("Failed to to dial peer with peer_id: {}, address: {}, attempts_remaining: {}, error: {}", peer_id, address, attempts_remaining, error);
+                        },
+                        SwarmEvent::UnknownPeerUnreachableAddr { address, error } => {
+                            debug!("Unknown peer at address being dialed to: {}, error: {}", address, error);
+                        },
+                        SwarmEvent::NewListenAddr { listener_id, address } => {
+                            debug!("New listening address: {} with id: {:?}", address, listener_id);
+                        },
+                        SwarmEvent::ExpiredListenAddr { listener_id, address } => {
+                            debug!("Listening address expired: {}, with id: {:?}", address, listener_id);
+                        },
+                        SwarmEvent::ListenerClosed { addresses, reason, .. } => {
+                            error!("Listener Closed: addresses: {:?} with reason: {:?}", addresses, reason);
+                        },
+                        SwarmEvent::ListenerError { error, ..} => {
+                            error!("Listener Error: {}", error);
+                        },
+                        SwarmEvent::Dialing(peer_id) => {
+                            debug!("Dialing Peer: {}", peer_id);
+                        },
                         SwarmEvent::Behaviour(ForestBehaviourEvent::PeerConnected(peer_id)) => {
                             debug!("Peer connected, {:?}", peer_id);
                             emit_event(&self.network_sender_out,

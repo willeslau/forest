@@ -144,7 +144,9 @@ impl<'a> DiscoveryConfig<'a> {
 
         let mdns_opt = if enable_mdns {
             Some(task::block_on(async {
-                Mdns::new(MdnsConfig::default()).await.expect("Could not start mDNS")
+                Mdns::new(MdnsConfig::default())
+                    .await
+                    .expect("Could not start mDNS")
             }))
         } else {
             None
@@ -406,12 +408,15 @@ impl NetworkBehaviour for DiscoveryBehaviour {
                             score,
                         })
                     }
-                    NetworkBehaviourAction::CloseConnection { peer_id, connection } => {
+                    NetworkBehaviourAction::CloseConnection {
+                        peer_id,
+                        connection,
+                    } => {
                         return Poll::Ready(NetworkBehaviourAction::CloseConnection {
                             peer_id,
-                            connection
+                            connection,
                         })
-                    },
+                    }
                 }
             }
         }
@@ -451,12 +456,15 @@ impl NetworkBehaviour for DiscoveryBehaviour {
                         score,
                     })
                 }
-                NetworkBehaviourAction::CloseConnection { peer_id, connection } => {
+                NetworkBehaviourAction::CloseConnection {
+                    peer_id,
+                    connection,
+                } => {
                     return Poll::Ready(NetworkBehaviourAction::CloseConnection {
                         peer_id,
                         connection,
                     })
-                },
+                }
             }
         }
 
