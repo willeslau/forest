@@ -17,7 +17,7 @@ use forest_cid::{Cid, Code::Blake2b256};
 use forest_encoding::from_slice;
 use forest_message::SignedMessage;
 use futures::channel::oneshot::Sender as OneShotSender;
-use futures::select;
+use futures::{Stream, select};
 use futures_util::stream::StreamExt;
 use ipld_blockstore::BlockStore;
 use libp2p::core::multihash::Multihash;
@@ -410,6 +410,9 @@ where
                 interval_event = interval.next() => if interval_event.is_some() {
                     // Print peer count on an interval.
                     info!("Peers connected: {}", swarm_stream.get_mut().behaviour_mut().peers().len());
+                    info!("Network Channels: 
+                    network_receiver_out len: {} 
+                    network_receiver_in len: {:?}", self.network_receiver_out.len(), network_stream.size_hint());
                 }
             };
         }
