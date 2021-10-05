@@ -1,13 +1,17 @@
 use crate::{
     ActorMigration, ActorMigrationInput, MigrationError, MigrationOutput, MigrationResult,
 };
+use cid::multihash::Blake2b256;
 use ipld_blockstore::BlockStore;
 use std::sync::Arc;
 
 use cid::Cid;
 
 use actor_interface::actorv2::power::Claim as Power2Claim;
+use actor_interface::actorv2::power::State as Power2State;
 use actor_interface::actorv3::power::Claim as Power3Claim;
+use actor_interface::actorv3::power::State as Power3State;
+use actor_interface::actorv3::POWER_ACTOR_CODE_ID;
 use actor_interface::ActorVersion;
 use actor_interface::Map;
 
@@ -19,7 +23,51 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
         store: Arc<BS>,
         input: ActorMigrationInput,
     ) -> MigrationResult<MigrationOutput> {
-        todo!()
+        let in_state: Power2State = store
+            .get(&input.head)
+            .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))
+            .ok_or_else(|| {
+                MigrationError::BlockStoreRead("Power actor: could not read v2 state".to_string)
+            })?;
+
+        let mut proof_validation_batch = None;
+        if in_state.proof_validation_batch.is_none() {
+            let proof_validation_batch_out =
+                migrate_hamt_amt_raw(store.as_ref(), in_state.proof_validation_batch, 5, 4)?;
+            proof_validation_batch = Some(proof_validation_batch_out);
+        }
+
+        let claims = migrate_claims(store.as_ref(), &in_state.claims)?;
+
+        let cron_event_queue =
+            migrate_hamt_amt_raw(store.as_ref(), in_state.cron_event_queue, 6, 6)?;
+
+        let out_state = Power3State {
+            total_raw_byte_power: in_state.total_raw_byte_power,
+            total_bytes_committed: in_state.total_bytes_committed,
+            total_quality_adj_power: in_state.total_quality_adj_power,
+            total_qa_bytes_committed: in_state.total_qa_bytes_committed,
+            total_pledge_collateral: in_state.total_pledge_collateral,
+            this_epoch_raw_byte_power: in_state.this_epoch_raw_byte_power,
+            this_epoch_quality_adj_power: in_state.this_epoch_quality_adj_power,
+            this_epoch_pledge_collateral: in_state.this_epoch_pledge_collateral,
+            this_epoch_qa_power_smoothed: todo!(), // smoothing3
+            miner_count: in_state.miner_count,
+            miner_above_min_power_count: in_state.miner_above_min_power_count,
+            cron_event_queue,
+            first_cron_epoch: in_state.first_cron_epoch,
+            claims,
+            proof_validation_batch,
+        };
+
+        let new_head = store
+            .put(&out_state, Blake2b256)
+            .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))?;
+
+        Ok(MigrationOutput {
+            new_code_cid: *POWER_ACTOR_CODE_ID,
+            new_head,
+        });
     }
 }
 
