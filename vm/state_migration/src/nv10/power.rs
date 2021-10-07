@@ -1,7 +1,7 @@
 use crate::{
     ActorMigration, ActorMigrationInput, MigrationError, MigrationOutput, MigrationResult,
 };
-use cid::multihash::Blake2b256;
+use cid::Code::Blake2b256;
 use ipld_blockstore::BlockStore;
 use std::sync::Arc;
 
@@ -25,9 +25,9 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
     ) -> MigrationResult<MigrationOutput> {
         let in_state: Power2State = store
             .get(&input.head)
-            .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))
+            .map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?
             .ok_or_else(|| {
-                MigrationError::BlockStoreRead("Power actor: could not read v2 state".to_string)
+                MigrationError::BlockStoreRead("Power actor: could not read v2 state".to_string())
             })?;
 
         let mut proof_validation_batch = None;
@@ -37,7 +37,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
             proof_validation_batch = Some(proof_validation_batch_out);
         }
 
-        let claims = migrate_claims(store.as_ref(), &in_state.claims)?;
+        let claims = migrate_claims(store.as_ref(), in_state.claims)?;
 
         let cron_event_queue =
             migrate_hamt_amt_raw(store.as_ref(), in_state.cron_event_queue, 6, 6)?;
@@ -79,12 +79,18 @@ fn migrate_claims<BS: BlockStore + Send + Sync>(
         MigrationError::BlockStoreRead("Could not load Power map from root".to_string())
     })?;
 
-    let mut out_claims: Map<BS, Cid> = Map::new(store, ActorVersion::V3);
+    let mut out_claims: Map<BS, Power3Claim> = Map::new(store, ActorVersion::V3);
 
     let _ = in_claims.for_each(|k, v| {
-        let in_claim: Power2Claim = store.get(k).map_err(|e| {
+        let in_claim: Option<Power2Claim> = store.get(v).map_err(|e| {
             MigrationError::BlockStoreRead("Could not load claim from blockstore".to_string())
         })?;
+
+        let in_claim = match in_claim {
+            Some(claim) => claim,
+            None => return Ok(()),
+        };
+
         let post_proof = in_claim
             .seal_proof_type
             .registered_window_post_proof()
