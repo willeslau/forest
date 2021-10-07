@@ -70,3 +70,12 @@ pub fn migrate_hamt_hamt_raw<BS: BlockStore + Send + Sync>(
         .put(&out_root_node_outer, Blake2b256)
         .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))
 }
+
+pub fn migrate_hamt_amt_raw<BS: BlockStore + Send + Sync>(
+    store: &BS,
+    root: &Cid,
+    new_outer_bitwidth: u32,
+    new_inner_bitwidth: u32,
+) -> Result<Cid, MigrationError> {
+    todo!()
+}
