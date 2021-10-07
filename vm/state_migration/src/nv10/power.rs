@@ -17,6 +17,8 @@ use actor_interface::actorv3::POWER_ACTOR_CODE_ID;
 use actor_interface::ActorVersion;
 use actor_interface::Map;
 
+use actor_interface::actorv3::util::FilterEstimate;
+
 pub struct PowerMigrator(Cid);
 
 impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
@@ -57,7 +59,9 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
             this_epoch_raw_byte_power: in_state.this_epoch_raw_byte_power,
             this_epoch_quality_adj_power: in_state.this_epoch_quality_adj_power,
             this_epoch_pledge_collateral: in_state.this_epoch_pledge_collateral,
-            this_epoch_qa_power_smoothed: todo!(), // smoothing3
+            this_epoch_qa_power_smoothed: FilterEstimate::from(
+                in_state.this_epoch_qa_power_smoothed,
+            ),
             miner_count: in_state.miner_count,
             miner_above_min_power_count: in_state.miner_above_min_power_count,
             cron_event_queue,
@@ -73,7 +77,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
         Ok(MigrationOutput {
             new_code_cid: *POWER_ACTOR_CODE_ID,
             new_head,
-        });
+        })
     }
 }
 
