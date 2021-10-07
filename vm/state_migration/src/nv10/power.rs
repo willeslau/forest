@@ -1,11 +1,13 @@
 use crate::{
     ActorMigration, ActorMigrationInput, MigrationError, MigrationOutput, MigrationResult,
 };
+
+use super::migrate_hamt_amt_raw;
+
+use cid::Cid;
 use cid::Code::Blake2b256;
 use ipld_blockstore::BlockStore;
 use std::sync::Arc;
-
-use cid::Cid;
 
 use actor_interface::actorv2::power::Claim as Power2Claim;
 use actor_interface::actorv2::power::State as Power2State;
@@ -31,16 +33,20 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
             })?;
 
         let mut proof_validation_batch = None;
-        if in_state.proof_validation_batch.is_none() {
-            let proof_validation_batch_out =
-                migrate_hamt_amt_raw(store.as_ref(), in_state.proof_validation_batch, 5, 4)?;
+        if !in_state.proof_validation_batch.is_none() {
+            let proof_validation_batch_out = migrate_hamt_amt_raw(
+                store.as_ref(),
+                &in_state.proof_validation_batch.unwrap(),
+                5,
+                4,
+            )?;
             proof_validation_batch = Some(proof_validation_batch_out);
         }
 
         let claims = migrate_claims(store.as_ref(), in_state.claims)?;
 
         let cron_event_queue =
-            migrate_hamt_amt_raw(store.as_ref(), in_state.cron_event_queue, 6, 6)?;
+            migrate_hamt_amt_raw(store.as_ref(), &in_state.cron_event_queue, 6, 6)?;
 
         let out_state = Power3State {
             total_raw_byte_power: in_state.total_raw_byte_power,
