@@ -1,4 +1,4 @@
-// Copyright 2020 ChainSafe Systems
+// Copyright 2019-2022 ChainSafe Systems
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use super::cli::{block_until_sigint, Config};
@@ -44,7 +44,10 @@ pub(super) async fn start(config: Config) {
         .build_global()
         .expect("Failed to create global Rayon ThreadPool");
 
-    info!("Starting Forest daemon");
+    info!(
+        "Starting Forest daemon, version {}",
+        option_env!("FOREST_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+    );
 
     let path: PathBuf = [&config.data_dir, "libp2p"].iter().collect();
     let net_keypair = get_keypair(&path.join("keypair")).unwrap_or_else(|| {
