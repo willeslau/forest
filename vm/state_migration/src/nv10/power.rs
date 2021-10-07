@@ -59,8 +59,9 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
             this_epoch_raw_byte_power: in_state.this_epoch_raw_byte_power,
             this_epoch_quality_adj_power: in_state.this_epoch_quality_adj_power,
             this_epoch_pledge_collateral: in_state.this_epoch_pledge_collateral,
-            this_epoch_qa_power_smoothed: FilterEstimate::from(
-                in_state.this_epoch_qa_power_smoothed,
+            this_epoch_qa_power_smoothed: FilterEstimate::new(
+                in_state.this_epoch_qa_power_smoothed.position,
+                in_state.this_epoch_qa_power_smoothed.velocity,
             ),
             miner_count: in_state.miner_count,
             miner_above_min_power_count: in_state.miner_above_min_power_count,
