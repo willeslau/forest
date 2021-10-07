@@ -17,7 +17,7 @@ use actor_interface::actorv3::POWER_ACTOR_CODE_ID;
 use actor_interface::ActorVersion;
 use actor_interface::Map;
 
-use actor_interface::actorv3::util::FilterEstimate;
+use actor_interface::actorv3::util::smooth::FilterEstimate;
 
 pub struct PowerMigrator(Cid);
 
