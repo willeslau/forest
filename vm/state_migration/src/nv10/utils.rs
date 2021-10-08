@@ -1,3 +1,5 @@
+// Copyright 2019-2022 ChainSafe Systems
+// SPDX-License-Identifier: Apache-2.0, MIT
 use cid::{Cid, Code::Blake2b256};
 use ipld_amt::Amt;
 use ipld_blockstore::BlockStore;

@@ -1,3 +1,5 @@
+// Copyright 2019-2022 ChainSafe Systems
+// SPDX-License-Identifier: Apache-2.0, MIT
 use std::sync::Arc;
 
 use actor_interface::{
