@@ -4,6 +4,7 @@ use crate::{
 
 use actor_interface::actorv2::multisig::State as V2State;
 use actor_interface::actorv3::multisig::State as V3State;
+use actor_interface::actorv3::multisig::TxnID as TxnIdV3;
 use actor_interface::actorv3::MULTISIG_ACTOR_CODE_ID;
 
 use cid::{Cid, Code::Blake2b256};
@@ -34,7 +35,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MultisigMigrator {
         let out_state = V3State {
             signers: in_state.signers,
             num_approvals_threshold: in_state.num_approvals_threshold,
-            next_tx_id: in_state.next_tx_id,
+            next_tx_id: TxnIdV3(in_state.next_tx_id.0),
             initial_balance: in_state.initial_balance,
             start_epoch: in_state.start_epoch,
             unlock_duration: in_state.unlock_duration,

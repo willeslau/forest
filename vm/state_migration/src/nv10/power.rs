@@ -93,7 +93,7 @@ fn migrate_claims<BS: BlockStore + Send + Sync>(
     let mut out_claims: Map<BS, Power3Claim> = Map::new(store, ActorVersion::V3);
 
     let _ = in_claims.for_each(|k, v| {
-        let in_claim: Option<Power2Claim> = store.get(v).map_err(|e| {
+        let in_claim: Option<Power2Claim> = store.get(v).map_err(|_| {
             MigrationError::BlockStoreRead("Could not load claim from blockstore".to_string())
         })?;
 
@@ -105,7 +105,7 @@ fn migrate_claims<BS: BlockStore + Send + Sync>(
         let post_proof = in_claim
             .seal_proof_type
             .registered_window_post_proof()
-            .map_err(|e| MigrationError::Other)?;
+            .map_err(|_| MigrationError::Other)?;
 
         let out_claim = Power3Claim {
             window_post_proof_type: post_proof,

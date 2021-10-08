@@ -80,7 +80,8 @@ pub fn migrate_hamt_amt_raw<BS: BlockStore + Send + Sync>(
     let in_root_node_outer: Hamt<BS, Cid> =
         Hamt::load(root, store).map_err(|e| MigrationError::BlockStoreRead(e.to_string()))?;
 
-    let out_root_node_outer: Hamt<BS, Cid> = Hamt::new_with_bit_width(store, new_outer_bitwidth);
+    let mut out_root_node_outer: Hamt<BS, Cid> =
+        Hamt::new_with_bit_width(store, new_outer_bitwidth);
 
     let _ = in_root_node_outer.for_each(|k, v| {
         let out_inner = migrate_amt_raw(store, v, new_inner_bitwidth)?;
