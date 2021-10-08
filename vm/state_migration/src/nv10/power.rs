@@ -9,15 +9,15 @@ use cid::Code::Blake2b256;
 use ipld_blockstore::BlockStore;
 use std::sync::Arc;
 
-use actor_interface::actorv2::power::Claim as Power2Claim;
-use actor_interface::actorv2::power::State as Power2State;
-use actor_interface::actorv3::power::Claim as Power3Claim;
-use actor_interface::actorv3::power::State as Power3State;
-use actor_interface::actorv3::POWER_ACTOR_CODE_ID;
-use actor_interface::ActorVersion;
-use actor_interface::Map;
-
-use actor_interface::actorv3::util::smooth::FilterEstimate;
+use actor_interface::{
+    actorv2::power::{Claim as Power2Claim, State as Power2State},
+    actorv3::{
+        power::{Claim as Power3Claim, State as Power3State},
+        util::smooth::FilterEstimate,
+        POWER_ACTOR_CODE_ID,
+    },
+    ActorVersion, Map,
+};
 
 pub struct PowerMigrator(Cid);
 

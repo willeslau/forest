@@ -1,9 +1,10 @@
 use crate::{
     ActorMigration, ActorMigrationInput, MigrationError, MigrationOutput, MigrationResult,
 };
-use actor_interface::actorv2::init::State as Init2State;
-use actor_interface::actorv3::init::State as Init3State;
-use actor_interface::actorv3::INIT_ACTOR_CODE_ID;
+use actor_interface::{
+    actorv2::init::State as Init2State,
+    actorv3::{init::State as Init3State, INIT_ACTOR_CODE_ID},
+};
 
 use cid::{Cid, Code::Blake2b256};
 use ipld_blockstore::BlockStore;

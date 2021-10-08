@@ -1,18 +1,16 @@
 use std::sync::Arc;
 
-use actor_interface::actorv2::miner::Deadline as Miner2Deadline;
-use actor_interface::actorv2::miner::Deadlines as Miner2Deadlines;
-use actor_interface::actorv2::miner::MinerInfo as MinerInfo2;
-use actor_interface::actorv2::miner::State as V2State;
-use actor_interface::actorv3::miner::Deadlines as Miner3Deadlines;
-use actor_interface::actorv3::miner::MinerInfo as MinerInfo3;
-use actor_interface::actorv3::miner::State as V3State;
-use actor_interface::actorv3::miner::WorkerKeyChange;
-use actor_interface::{ActorVersion, Array};
-use actorv2::miner::Partition as PartitionV2;
-use actorv3::miner::Deadline;
-use actorv3::miner::Partition as PartitionV3;
-use actorv3::miner::PowerPair as MinerV3PowerPair;
+use actor_interface::{
+    actorv2::miner::{
+        Deadline as Miner2Deadline, Deadlines as Miner2Deadlines, MinerInfo as MinerInfo2,
+        Partition as PartitionV2, State as V2State,
+    },
+    actorv3::miner::{
+        Deadline, Deadlines as Miner3Deadlines, MinerInfo as MinerInfo3, Partition as PartitionV3,
+        PowerPair as MinerV3PowerPair, State as V3State, WorkerKeyChange,
+    },
+    ActorVersion, Array,
+};
 use cid::{Cid, Code::Blake2b256};
 use forest_bitfield::BitField;
 use ipld_blockstore::BlockStore;

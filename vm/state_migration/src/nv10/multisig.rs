@@ -2,10 +2,13 @@ use crate::{
     ActorMigration, ActorMigrationInput, MigrationError, MigrationOutput, MigrationResult,
 };
 
-use actor_interface::actorv2::multisig::State as V2State;
-use actor_interface::actorv3::multisig::State as V3State;
-use actor_interface::actorv3::multisig::TxnID as TxnIdV3;
-use actor_interface::actorv3::MULTISIG_ACTOR_CODE_ID;
+use actor_interface::{
+    actorv2::multisig::State as V2State,
+    actorv3::{
+        multisig::{State as V3State, TxnID as TxnIdV3},
+        MULTISIG_ACTOR_CODE_ID,
+    },
+};
 
 use cid::{Cid, Code::Blake2b256};
 use ipld_blockstore::BlockStore;

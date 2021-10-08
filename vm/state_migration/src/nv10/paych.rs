@@ -7,9 +7,10 @@ use crate::{
     ActorMigration, ActorMigrationInput, MigrationError, MigrationOutput, MigrationResult,
 };
 
-use actor_interface::actorv2::paych::State as StateV2;
-use actor_interface::actorv3::paych::State as StateV3;
-use actor_interface::actorv3::PAYCH_ACTOR_CODE_ID;
+use actor_interface::{
+    actorv2::paych::State as StateV2,
+    actorv3::{paych::State as StateV3, PAYCH_ACTOR_CODE_ID},
+};
 
 use super::migrate_amt_raw;
 

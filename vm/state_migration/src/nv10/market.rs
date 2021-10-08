@@ -3,13 +3,14 @@ use std::sync::Arc;
 use cid::{Cid, Code::Blake2b256};
 use ipld_blockstore::BlockStore;
 
-use actor_interface::actorv2::market::State as MarketV2State;
-use actor_interface::actorv3::market::State as MarketV3State;
-use actor_interface::actorv3::MARKET_ACTOR_CODE_ID;
-use actor_interface::ActorVersion;
-use actor_interface::Map;
-use actorv3::market::{PROPOSALS_AMT_BITWIDTH, STATES_AMT_BITWIDTH};
-use actorv3::BALANCE_TABLE_BITWIDTH;
+use actor_interface::{
+    actorv2::market::State as MarketV2State,
+    actorv3::{
+        market::{State as MarketV3State, PROPOSALS_AMT_BITWIDTH, STATES_AMT_BITWIDTH},
+        BALANCE_TABLE_BITWIDTH, MARKET_ACTOR_CODE_ID,
+    },
+    ActorVersion, Map,
+};
 
 use crate::{
     ActorMigration, ActorMigrationInput, MigrationError, MigrationOutput, MigrationResult,
