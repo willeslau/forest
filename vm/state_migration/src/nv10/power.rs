@@ -8,6 +8,7 @@ use super::migrate_hamt_amt_raw;
 
 use cid::Cid;
 use cid::Code::Blake2b256;
+use fil_types::HAMT_BIT_WIDTH;
 use ipld_blockstore::BlockStore;
 use std::sync::Arc;
 
@@ -41,7 +42,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
             let proof_validation_batch_out = migrate_hamt_amt_raw(
                 store.as_ref(),
                 &in_state.proof_validation_batch.unwrap(),
-                5,
+                HAMT_BIT_WIDTH,
                 4,
             )?;
             proof_validation_batch = Some(proof_validation_batch_out);

@@ -9,6 +9,7 @@ use actor_interface::{
 };
 
 use cid::{Cid, Code::Blake2b256};
+use fil_types::HAMT_BIT_WIDTH;
 use ipld_blockstore::BlockStore;
 
 use super::migrate_hamt_raw;
@@ -28,7 +29,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for InitMigrator {
                 MigrationError::BlockStoreRead("Init actor: could not read v2 state".to_string())
             })?;
 
-        let address_map = migrate_hamt_raw(store.as_ref(), &in_state.address_map, 5)
+        let address_map = migrate_hamt_raw(store.as_ref(), &in_state.address_map, HAMT_BIT_WIDTH)
             .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))?;
 
         let out_state = Init3State {

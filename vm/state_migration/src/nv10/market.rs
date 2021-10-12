@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use cid::{Cid, Code::Blake2b256};
+use fil_types::HAMT_BIT_WIDTH;
 use ipld_blockstore::BlockStore;
 
 use actor_interface::{
@@ -54,8 +55,12 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MarketMigrator {
             BALANCE_TABLE_BITWIDTH,
         )?;
 
-        let deal_ops_by_epoch =
-            migrate_hamt_hamt_raw(store.as_ref(), &in_state.deal_ops_by_epoch, 5, 5)?;
+        let deal_ops_by_epoch = migrate_hamt_hamt_raw(
+            store.as_ref(),
+            &in_state.deal_ops_by_epoch,
+            HAMT_BIT_WIDTH,
+            HAMT_BIT_WIDTH,
+        )?;
 
         let out_state = MarketV3State {
             proposals,

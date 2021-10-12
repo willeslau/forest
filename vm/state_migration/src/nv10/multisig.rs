@@ -13,6 +13,7 @@ use actor_interface::{
 };
 
 use cid::{Cid, Code::Blake2b256};
+use fil_types::HAMT_BIT_WIDTH;
 use ipld_blockstore::BlockStore;
 use std::sync::Arc;
 
@@ -35,7 +36,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MultisigMigrator {
                 )
             })?;
 
-        let pending_txs = migrate_hamt_raw(store.as_ref(), &in_state.pending_txs, 5)?;
+        let pending_txs = migrate_hamt_raw(store.as_ref(), &in_state.pending_txs, HAMT_BIT_WIDTH)?;
 
         let out_state = V3State {
             signers: in_state.signers,

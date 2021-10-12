@@ -14,6 +14,7 @@ use actor_interface::{
     ActorVersion, Array,
 };
 use cid::{Cid, Code::Blake2b256};
+use fil_types::HAMT_BIT_WIDTH;
 use forest_bitfield::BitField;
 use ipld_blockstore::BlockStore;
 
@@ -48,11 +49,14 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for MinerMigrator {
 
         let info = migrate_info(store_ref, in_state.info)?;
 
-        let pre_committed_sectors_expiry_out =
-            migrate_amt_raw(store_ref, &in_state.pre_committed_sectors_expiry, 3)?;
+        let pre_committed_sectors_expiry_out = migrate_amt_raw(
+            store_ref,
+            &in_state.pre_committed_sectors_expiry,
+            HAMT_BIT_WIDTH as usize,
+        )?;
 
         let pre_committed_sectors_out =
-            migrate_hamt_raw(store_ref, &in_state.pre_committed_sectors_expiry, 5)?;
+            migrate_hamt_raw(store_ref, &in_state.pre_committed_sectors_expiry, 6)?;
 
         let sectors: Option<Cid> = store_ref
             .get(&in_state.sectors)
@@ -194,7 +198,7 @@ fn migrate_deadlines<BS: BlockStore + Send + Sync>(
 
         let partitions = migrate_partitions(store.to_owned(), in_deadline.partitions)?;
 
-        let expirations_epochs = migrate_amt_raw(store, &in_deadline.expirations_epochs, 5usize)
+        let expirations_epochs = migrate_amt_raw(store, &in_deadline.expirations_epochs, 5)
             .map_err(|e| MigrationError::BlockStoreWrite(e.to_string()))?;
 
         out_deadline.partitions = partitions;
@@ -238,7 +242,7 @@ fn migrate_partitions<BS: BlockStore + Send + Sync>(
             let expirations_epochs =
                 migrate_amt_raw(store, &in_partition.expirations_epochs, 4usize)?;
 
-            let early_terminated = migrate_amt_raw(store, &in_partition.early_terminated, 3usize)?;
+            let early_terminated = migrate_amt_raw(store, &in_partition.early_terminated, 3)?;
 
             let out_partition = PartitionV3 {
                 expirations_epochs,
