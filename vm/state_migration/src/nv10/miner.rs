@@ -119,14 +119,12 @@ fn migrate_info<BS: BlockStore + Send + Sync>(
 
     let old_info = old_info.unwrap();
 
-    let pending_worker_key = if let Some(worker_key) = old_info.pending_worker_key {
-        Some(WorkerKeyChange {
+    let pending_worker_key = old_info
+        .pending_worker_key
+        .map(|worker_key| WorkerKeyChange {
             new_worker: worker_key.new_worker,
             effective_at: worker_key.effective_at,
-        })
-    } else {
-        None
-    };
+        });
 
     let window_post_proof_type = old_info
         .seal_proof_type

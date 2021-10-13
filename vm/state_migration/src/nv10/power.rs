@@ -38,7 +38,7 @@ impl<BS: BlockStore + Send + Sync> ActorMigration<BS> for PowerMigrator {
             })?;
 
         let mut proof_validation_batch = None;
-        if !in_state.proof_validation_batch.is_none() {
+        if in_state.proof_validation_batch.is_some() {
             let proof_validation_batch_out = migrate_hamt_amt_raw(
                 store.as_ref(),
                 &in_state.proof_validation_batch.unwrap(),
