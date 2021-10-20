@@ -4,6 +4,7 @@
 /// Filecoin RPC client interface methods
 pub mod auth_ops;
 pub mod chain_ops;
+pub mod mpool_ops;
 pub mod net_ops;
 pub mod state_ops;
 pub mod sync_ops;
@@ -29,6 +30,7 @@ pub const RPC_ENDPOINT: &str = "rpc/v0";
 
 pub use self::auth_ops::*;
 pub use self::chain_ops::*;
+pub use self::mpool_ops::*;
 pub use self::net_ops::*;
 pub use self::state_ops::*;
 pub use self::sync_ops::*;
@@ -78,17 +80,17 @@ pub enum JsonRpcResponse<R> {
     },
 }
 
-struct URL {
+struct Url {
     protocol: String,
     port: String,
     host: String,
 }
 
-/// Parses a multiaddress into a URL
+/// Parses a multiaddress into a Url
 fn multiaddress_to_url(multiaddr: Multiaddr) -> String {
-    // Fold Multiaddress into a URL struct
+    // Fold Multiaddress into a Url struct
     let addr = multiaddr.into_iter().fold(
-        URL {
+        Url {
             protocol: DEFAULT_PROTOCOL.to_owned(),
             port: DEFAULT_PORT.to_owned(),
             host: DEFAULT_HOST.to_owned(),

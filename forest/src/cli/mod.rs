@@ -6,6 +6,7 @@ mod chain_cmd;
 mod config;
 mod fetch_params_cmd;
 mod genesis_cmd;
+mod mpool_cmd;
 mod net_cmd;
 mod state_cmd;
 mod sync_cmd;
@@ -16,6 +17,7 @@ pub(super) use self::chain_cmd::ChainCommands;
 pub use self::config::Config;
 pub(super) use self::fetch_params_cmd::FetchCommands;
 pub(super) use self::genesis_cmd::GenesisCommands;
+pub(super) use self::mpool_cmd::MpoolCommands;
 pub(super) use self::net_cmd::NetCommands;
 pub(super) use self::state_cmd::StateCommands;
 pub(super) use self::sync_cmd::SyncCommands;
@@ -48,9 +50,9 @@ use utils::{read_file_to_string, read_toml};
     about = env!("CARGO_PKG_DESCRIPTION"),
     author = env!("CARGO_PKG_AUTHORS")
 )]
-pub struct CLI {
+pub struct Cli {
     #[structopt(flatten)]
-    pub opts: CLIOpts,
+    pub opts: CliOpts,
     #[structopt(subcommand)]
     pub cmd: Option<Subcommand>,
 }
@@ -79,15 +81,20 @@ pub enum Subcommand {
 
     #[structopt(name = "wallet", about = "Manage wallet")]
     Wallet(WalletCommands),
+
     #[structopt(name = "sync", about = "Inspect or interact with the chain syncer")]
     Sync(SyncCommands),
+
+    #[structopt(name = "mpool", about = "Interact with the Message Pool")]
+    Mpool(MpoolCommands),
+
     #[structopt(name = "state", about = "Interact with and query filecoin chain state")]
     State(StateCommands),
 }
 
 /// CLI options
 #[derive(StructOpt, Debug)]
-pub struct CLIOpts {
+pub struct CliOpts {
     #[structopt(short, long, help = "A toml file containing relevant configurations")]
     pub config: Option<String>,
     #[structopt(short, long, help = "The genesis CAR file")]
@@ -137,7 +144,7 @@ pub struct CLIOpts {
     pub encrypt_keystore: Option<bool>,
 }
 
-impl CLIOpts {
+impl CliOpts {
     pub fn to_config(&self) -> Result<Config, io::Error> {
         let mut cfg: Config = match &self.config {
             Some(config_file) => {
@@ -235,7 +242,7 @@ pub(super) async fn block_until_sigint() {
     ctrlc_oneshot.await.unwrap();
 }
 
-/// Returns a stringified JSON-RPC error
+/// Print a stringified JSON-RPC error and exit
 pub(super) fn handle_rpc_err(e: JsonRpcError) {
     match e {
         JsonRpcError::Full {
