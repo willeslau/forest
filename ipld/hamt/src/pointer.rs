@@ -13,7 +13,7 @@ use std::convert::TryFrom;
 
 /// Pointer to index values or a link to another child node.
 #[derive(Debug)]
-pub(crate) enum Pointer<K, V, H> {
+pub enum Pointer<K, V, H> {
     Values(Vec<KeyValuePair<K, V>>),
     Link {
         cid: Cid,
