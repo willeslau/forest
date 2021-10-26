@@ -23,6 +23,9 @@ pub use self::hamt::Hamt;
 pub use self::hash::*;
 pub use self::hash_algorithm::*;
 
+pub use self::node::*;
+pub use self::pointer::*;
+
 pub use forest_hash_utils::{BytesKey, Hash};
 use serde::{Deserialize, Serialize};
 
