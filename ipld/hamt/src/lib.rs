@@ -25,6 +25,7 @@ pub use self::hash_algorithm::*;
 
 pub use self::node::*;
 pub use self::pointer::*;
+pub use self::bitfield::*;
 
 pub use forest_hash_utils::{BytesKey, Hash};
 use serde::{Deserialize, Serialize};
