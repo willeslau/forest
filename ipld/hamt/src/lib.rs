@@ -21,6 +21,7 @@ mod pointer;
 pub use self::error::Error;
 pub use self::hamt::Hamt;
 pub use self::hash::*;
+pub use self::hash_bits::*;
 pub use self::hash_algorithm::*;
 
 pub use self::node::*;
