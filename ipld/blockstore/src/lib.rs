@@ -20,7 +20,7 @@ pub use self::buffered::BufferedBlockStore;
 pub use self::tracking::{BSStats, TrackingBlockStore};
 
 use cid::{Cid, Code};
-use db::{MemoryDB, Store};
+pub use db::{MemoryDB, Store};
 use encoding::{de::DeserializeOwned, from_slice, ser::Serialize, to_vec};
 use std::error::Error as StdError;
 
