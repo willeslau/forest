@@ -115,10 +115,10 @@ where
 }
 
 #[derive(Serialize, Deserialize)]
-pub(crate) struct CollapsedNode<V>(#[serde(with = "serde_bytes")] Vec<u8>, Vec<Cid>, Vec<V>);
+pub struct CollapsedNode<V>(#[serde(with = "serde_bytes")] Vec<u8>, Vec<Cid>, Vec<V>);
 
 impl<V> CollapsedNode<V> {
-    pub(crate) fn expand(self, bit_width: usize) -> Result<Node<V>, Error> {
+    pub fn expand(self, bit_width: usize) -> Result<Node<V>, Error> {
         let CollapsedNode(bmap, links, values) = self;
         if !links.is_empty() && !values.is_empty() {
             return Err(Error::LinksAndValues);
