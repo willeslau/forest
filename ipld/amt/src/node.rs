@@ -15,7 +15,7 @@ use std::error::Error as StdError;
 
 /// This represents a link to another Node
 #[derive(Debug)]
-pub(super) enum Link<V> {
+pub enum Link<V> {
     /// Unchanged link to data with an atomic cache.
     Cid {
         cid: Cid,

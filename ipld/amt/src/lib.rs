@@ -15,6 +15,7 @@ mod value_mut;
 pub use self::amt::Amt;
 pub use self::error::Error;
 pub use self::node::Node;
+pub use self::node::Link;
 pub use self::root::Root;
 pub use self::value_mut::ValueMut;
 
