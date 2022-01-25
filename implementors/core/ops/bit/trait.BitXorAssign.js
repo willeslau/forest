@@ -1,3 +1,0 @@
-(function() {var implementors = {};
-implementors["forest_bitfield"] = [{"text":"impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.55.0/core/ops/bit/trait.BitXorAssign.html\" title=\"trait core::ops::bit::BitXorAssign\">BitXorAssign</a>&lt;&amp;'_ <a class=\"struct\" href=\"forest_bitfield/struct.BitField.html\" title=\"struct forest_bitfield::BitField\">BitField</a>&gt; for <a class=\"struct\" href=\"forest_bitfield/struct.BitField.html\" title=\"struct forest_bitfield::BitField\">BitField</a>","synthetic":false,"types":["forest_bitfield::BitField"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

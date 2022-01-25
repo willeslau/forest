@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["Deadline","Deadline holds the state for all sectors due at a specific deadline."],["Partition",""],["State","Miner actor state."]],"struct":[["MinerInfo","Static information about miner"],["MinerPower",""],["SectorOnChainInfo",""],["SectorPreCommitInfo",""],["SectorPreCommitOnChainInfo",""]],"type":[["Method","Miner actor method."]]});

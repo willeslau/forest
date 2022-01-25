@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["State","Account actor state."]],"type":[["Method","Account actor method."]]});

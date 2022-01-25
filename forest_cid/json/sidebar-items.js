@@ -1,1 +1,0 @@
-initSidebarItems({"fn":[["deserialize",""],["serialize",""]],"mod":[["opt",""],["vec",""]],"struct":[["CidJson","Wrapper for serializing and deserializing a Cid from JSON."],["CidJsonRef","Wrapper for serializing a cid reference to JSON."]]});

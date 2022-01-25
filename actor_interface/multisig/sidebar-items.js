@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["State","Multisig actor state."]],"type":[["Method","Multisig actor method."]]});

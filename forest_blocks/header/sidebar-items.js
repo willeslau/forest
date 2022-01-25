@@ -1,1 +1,0 @@
-initSidebarItems({"mod":[["json",""]],"struct":[["BlockHeader","Header of a block"],["BlockHeaderBuilder","Builder for `BlockHeader`."]]});

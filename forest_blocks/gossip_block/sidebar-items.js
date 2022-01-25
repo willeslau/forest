@@ -1,1 +1,0 @@
-initSidebarItems({"mod":[["json",""]],"struct":[["GossipBlock","Block message used as serialized gossipsub messages for blocks topic."]]});

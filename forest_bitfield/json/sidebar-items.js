@@ -1,1 +1,0 @@
-initSidebarItems({"struct":[["BitFieldJson",""],["BitFieldJsonRef","Wrapper for serializing a UnsignedMessage reference to JSON."]]});

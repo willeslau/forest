@@ -1,1 +1,0 @@
-initSidebarItems({"fn":[["deserialize",""],["serialize",""]],"mod":[["vec",""]],"struct":[["PoStProofJson","Wrapper for serializing a PoStProof to JSON."],["PoStProofJsonRef","Wrapper for serializing a PoStProof reference to JSON."],["SectorInfoJson",""]]});

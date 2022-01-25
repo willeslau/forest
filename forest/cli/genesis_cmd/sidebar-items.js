@@ -1,1 +1,0 @@
-initSidebarItems({"constant":[["ACCOUNT_START",""]],"enum":[["GenesisCommands",""]],"fn":[["add_miner",""]]});

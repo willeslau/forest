@@ -1,1 +1,0 @@
-initSidebarItems({"mod":[["json",""]],"struct":[["MessageReceipt","Result of a state transition from a message"]]});

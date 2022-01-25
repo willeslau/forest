@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["State","Cron actor state."]],"static":[["ADDRESS","Cron actor address."]],"type":[["Method","Cron actor method."]]});

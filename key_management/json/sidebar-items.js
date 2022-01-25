@@ -1,1 +1,0 @@
-initSidebarItems({"fn":[["deserialize",""],["serialize",""]],"struct":[["KeyInfoJson","Wrapper for serializing and deserializing a SignedMessage from JSON."],["KeyInfoJsonRef","Wrapper for serializing a SignedMessage reference to JSON."]]});

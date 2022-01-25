@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["State","System actor state."]],"static":[["ADDRESS","System actor address."]],"type":[["Method","System actor method."]]});

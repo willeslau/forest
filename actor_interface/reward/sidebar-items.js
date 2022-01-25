@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["State","Reward actor state."]],"static":[["ADDRESS","Reward actor address."]],"type":[["Method","Reward actor method."]]});

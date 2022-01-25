@@ -1,1 +1,0 @@
-initSidebarItems({"fn":[["deserialize",""],["serialize",""]],"mod":[["vec",""]],"struct":[["BeaconEntryJson","Wrapper for serializing and deserializing a BeaconEntry from JSON."],["BeaconEntryJsonRef","Wrapper for serializing a BeaconEntry reference to JSON."]]});

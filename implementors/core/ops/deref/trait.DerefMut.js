@@ -1,3 +1,0 @@
-(function() {var implementors = {};
-implementors["ipld_amt"] = [{"text":"impl&lt;V&gt; <a class=\"trait\" href=\"https://doc.rust-lang.org/1.55.0/core/ops/deref/trait.DerefMut.html\" title=\"trait core::ops::deref::DerefMut\">DerefMut</a> for <a class=\"struct\" href=\"ipld_amt/struct.ValueMut.html\" title=\"struct ipld_amt::ValueMut\">ValueMut</a>&lt;'_, V&gt;","synthetic":false,"types":["ipld_amt::value_mut::ValueMut"]}];
-if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()

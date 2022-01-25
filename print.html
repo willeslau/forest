@@ -3,7 +3,8 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>Introduction</title>
+        <title></title>
+        <meta name="robots" content="noindex" />
 
 
         <!-- Custom HTML head -->
@@ -163,15 +164,105 @@ The implementation takes a modular approach to building a full Filecoin node in 
 </ul>
 <h2 id="disclaimer"><a class="header" href="#disclaimer">Disclaimer</a></h2>
 <p>The Forest implementation of the Filecoin protocol is alpha software which should not yet be integrated into production workflows. The team is working to provide reliable, secure, and efficient interfaces to the Filecoin ecosystem. If you would like to chat, please reach out over Discord on the ChainSafe server linked above.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="basic-usage"><a class="header" href="#basic-usage">Basic Usage</a></h1>
+<h2 id="build"><a class="header" href="#build">Build</a></h2>
+<h3 id="toolchain"><a class="header" href="#toolchain">Toolchain</a></h3>
+<ul>
+<li><a href="https://www.rust-lang.org/tools/install">Rust</a></li>
+</ul>
+<h3 id="dependencies"><a class="header" href="#dependencies">Dependencies</a></h3>
+<p>The following commands will install the required dependencies for Forest:</p>
+<pre><code class="language-bash"># Install protoc
+PROTOC_ZIP=protoc-3.7.1-linux-x86_64.zip
+curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v3.7.1/$PROTOC_ZIP
+unzip -o $PROTOC_ZIP -d /usr/local bin/protoc
+unzip -o $PROTOC_ZIP -d /usr/local 'include/*'
+rm -f $PROTOC_ZIP
+
+# Extra dependencies needed for rust-fil-proofs
+apt-get update &amp;&amp; \
+    apt-get install --no-install-recommends -y curl file gcc g++ hwloc libhwloc-dev git make openssh-client \
+    ca-certificates autoconf automake cmake libtool libcurl4 libcurl4-openssl-dev libssl-dev \
+    libelf-dev libdw-dev binutils-dev zlib1g-dev libiberty-dev wget \
+    xz-utils pkg-config python clang ocl-icd-opencl-dev
+
+# Install binary dependencies
+apt-get update &amp;&amp; \
+    apt-get install --no-install-recommends -y curl file gcc g++ hwloc libhwloc-dev make openssh-client \
+    autoconf automake cmake libtool libcurl4 libcurl4-openssl-dev libssl-dev \
+    libelf-dev libdw-dev binutils-dev zlib1g-dev libiberty-dev wget \
+    xz-utils pkg-config python clang ocl-icd-opencl-dev ca-certificates
+</code></pre>
+<h3 id="commands"><a class="header" href="#commands">Commands</a></h3>
+<pre><code class="language-bash">make release
+</code></pre>
+<h2 id="forest-import-snapshot-mode"><a class="header" href="#forest-import-snapshot-mode">Forest Import Snapshot Mode</a></h2>
+<p>Before running <code>forest</code> in the normal mode you must seed the database with the Filecoin state tree from the latest snapshot. To do that, we will download the latest snapshot provided by Protocol Labs and start <code>forest</code> using the <code>--import-snapshot</code> flag. After the snapshot has been successfully imported, you can start <code>forest</code> without the <code>--import-snapshot</code> flag.</p>
+<h3 id="commands-1"><a class="header" href="#commands-1">Commands</a></h3>
+<p>Download the latest snapshot provided by Protocol Labs:</p>
+<pre><code class="language-bash">curl -sI https://fil-chain-snapshots-fallback.s3.amazonaws.com/mainnet/minimal_finality_stateroots_latest.car | perl -ne '/x-amz-website-redirect-location:\s(.+)\.car/ &amp;&amp; print &quot;$1.sha256sum\n$1.car&quot;' | xargs wget
+</code></pre>
+<p>If desired, you can check the checksum using the instructions <a href="https://lotus.filecoin.io/docs/set-up/chain-management/#lightweight-snapshot">here</a>.</p>
+<p>Import the snapshot using <code>forest</code>:</p>
+<pre><code class="language-bash">./target/release/forest --target-peer-count 50 --encrypt-keystore false --import-snapshot /path/to/snapshot/file
+</code></pre>
+<h2 id="forest-synchronization-mode"><a class="header" href="#forest-synchronization-mode">Forest Synchronization Mode</a></h2>
+<h3 id="commands-2"><a class="header" href="#commands-2">Commands</a></h3>
+<h4 id="mainnet"><a class="header" href="#mainnet">Mainnet</a></h4>
+<p>Start the <code>forest</code> node:</p>
+<pre><code class="language-bash">./target/release/forest --target-peer-count 50 --encrypt-keystore false
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
+<p>The <code>forest</code> process has a set of configurable values which determine the behavior of the node. All values can be set through process flags or through a configuration file. If a configuration is provided through the flag and the configuation file, the flag value will be given preference.</p>
+<h2 id="flags"><a class="header" href="#flags">Flags</a></h2>
+<p>When starting <code>forest</code> you can configure the behavior of the process through the use of the following flags:</p>
+<table><thead><tr><th>Flag</th><th>Value</th><th>Description</th></tr></thead><tbody>
+<tr><td>--config</td><td>OS File Path</td><td>Path to TOML file containing configuration</td></tr>
+<tr><td>--genesis</td><td>OS File Path</td><td>CAR file with genesis state</td></tr>
+<tr><td>--rpc</td><td>Boolean</td><td>Toggles the RPC API on</td></tr>
+<tr><td>--port</td><td>Integer</td><td>Port for JSON-RPC communication</td></tr>
+<tr><td>--token</td><td>String</td><td>Client JWT token to use for JSON-RPC authentication</td></tr>
+<tr><td>--metrics-port</td><td>Integer</td><td>Port used for metrics collection server</td></tr>
+<tr><td>--kademlia</td><td>Boolean</td><td>Determines whether Kademilia is allowed</td></tr>
+<tr><td>--mdns</td><td>Boolean</td><td>Determines whether MDNS is allowed</td></tr>
+<tr><td>--import-snapshot</td><td>OS File Path</td><td>Path to snapshot CAR file</td></tr>
+<tr><td>--import-chain</td><td>OS File Path</td><td>Path to chain CAR file</td></tr>
+<tr><td>--skip-load</td><td>Boolean</td><td>Skips loading CAR File and uses header to index chain</td></tr>
+<tr><td>--req-window</td><td>Integer</td><td>Sets the number of tipsets requested over chain exchange</td></tr>
+<tr><td>--tipset-sample-size</td><td>Integer</td><td>Number of tipsets to include in the sample which determines the network head during synchronization</td></tr>
+<tr><td>--target-peer-count</td><td>Integer</td><td>Amount of peers the node should maintain a connection with</td></tr>
+<tr><td>--encrypt-keystore</td><td>Boolean</td><td>Controls whether the keystore is encrypted</td></tr>
+</tbody></table>
+<h2 id="configuration-file"><a class="header" href="#configuration-file">Configuration File</a></h2>
+<p>Alternatively, when starting <code>forest</code> you can define a TOML configuration file and provide it to the process with the <code>--config</code> flag or through the <code>FOREST_CONFIG_PATH</code> environment variable.</p>
+<p>The following is an sample configuration file: </p>
+<pre><code class="language-toml">genesis = &quot;/path/to/genesis/file&quot;
+rpc = true
+port = 1234
+token = &quot;0394j3094jg0394jg34g&quot;
+metrics-port = 2345
+kademlia = true
+mdns = true
+import-snapshot = /path/to/snapshot/file
+import-chain = /path/to/chain/file
+skip-load = false
+req-window = 100
+tipset-sample-size = 10
+target-peer-count = 100
+encrypt-keystore = false
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="trouble-shooting"><a class="header" href="#trouble-shooting">Trouble Shooting</a></h1>
+<h2 id="common-issues"><a class="header" href="#common-issues">Common Issues</a></h2>
+<h4 id="file-descriptor-limits"><a class="header" href="#file-descriptor-limits">File Descriptor Limits</a></h4>
+<p>To properly manage the Filecoin state tree with RocksDB, Forest requires a custom allocation of file descriptors. Please set the process file descriptor limits to <code>1048576</code> to avoid stalling the node.</p>
+<p>For MacOS and Linux distributions, this can be done by using the <code>usize</code> command. Using this command will set it for the current session. On MacOS, setting the limit too high will default it to a max of 
+<code>12288</code>. There are many guides online to override this along with specific Linux guides to make the new max persistent.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
 
-                            <a rel="next" href="basic_usage.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                                <i class="fa fa-angle-right"></i>
-                            </a>
 
                         <div style="clear: both"></div>
                     </nav>
@@ -180,9 +271,6 @@ The implementation takes a modular approach to building a full Filecoin node in 
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
 
-                    <a rel="next" href="basic_usage.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
-                        <i class="fa fa-angle-right"></i>
-                    </a>
             </nav>
 
         </div>
@@ -205,6 +293,11 @@ The implementation takes a modular approach to building a full Filecoin node in 
 
         <!-- Custom JS scripts -->
 
+        <script type="text/javascript">
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
 
     </body>
 </html>

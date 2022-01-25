@@ -1,1 +1,0 @@
-initSidebarItems({"enum":[["Method","Account actor methods available"]],"struct":[["Actor","Account Actor"],["State","State includes the address for the actor"]]});

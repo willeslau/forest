@@ -1,1 +1,0 @@
-initSidebarItems({"fn":[["deserialize",""],["serialize",""]],"mod":[["opt",""]],"struct":[["ElectionProofJson","Wrapper for serializing and deserializing a ElectionProof from JSON."],["ElectionProofJsonRef","Wrapper for serializing a ElectionProof reference to JSON."]]});

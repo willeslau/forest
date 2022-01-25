@@ -1,1 +1,0 @@
-initSidebarItems({"fn":[["wallet_balance",""],["wallet_default_address",""],["wallet_export",""],["wallet_has",""],["wallet_import",""],["wallet_list",""],["wallet_new",""],["wallet_set_default",""],["wallet_sign",""],["wallet_verify",""]]});
